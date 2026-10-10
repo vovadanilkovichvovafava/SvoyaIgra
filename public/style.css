@@ -210,3 +210,25 @@ canvas.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 40; 
 /* фальстарт на телефоне */
 .buzzer.early { background: radial-gradient(circle at 35% 30%, #777, #333) !important; color: #ff8080 !important; animation: shake .3s !important; }
 @keyframes shake { 25% { transform: translateX(-10px); } 75% { transform: translateX(10px); } }
+
+/* ---------- модификаторы ---------- */
+.modbadge { padding: 8px 14px; font-size: clamp(14px, 1.6vw, 22px); border: 2px solid; max-width: 1000px; }
+.modbadge.mystery { border-color: var(--gold); color: var(--gold); background: rgba(255,198,26,.08); animation: pulse 1.4s infinite; }
+.modbadge.good { border-color: var(--green); background: rgba(49,209,124,.15); }
+.modbadge.bad { border-color: var(--red); background: rgba(255,75,75,.15); }
+.modbadge.mixed { border-color: var(--gold); background: rgba(255,198,26,.12); }
+.board .cell { position: relative; }
+.cellmod { position: absolute; top: 3px; right: 5px; font-size: 14px; text-shadow: none; filter: drop-shadow(0 0 3px #000); }
+
+.modfx { position: fixed; inset: 0; z-index: 35; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3vh;
+  background: rgba(0, 4, 30, .88); backdrop-filter: blur(4px); padding: 16px; text-align: center; cursor: pointer; transition: opacity .5s; }
+.modfx.out { opacity: 0; }
+.modfx-who { font-size: clamp(20px, 3vw, 44px); font-weight: 700; text-transform: uppercase; }
+.modfx-slot { display: flex; flex-direction: column; align-items: center; gap: 1vh; min-width: min(640px, 90vw); padding: 4vh 24px;
+  background: linear-gradient(180deg, var(--cell-top), var(--cell-bot)); border: 3px solid var(--cell-line); box-shadow: 0 0 60px rgba(60,110,255,.5); }
+.modfx-slot .e { font-size: clamp(60px, 10vw, 150px); line-height: 1; }
+.modfx-slot .n { font-size: clamp(28px, 5vw, 80px); font-weight: 900; text-transform: uppercase; }
+.modfx-slot.good { border-color: var(--green); box-shadow: 0 0 80px rgba(49,209,124,.7); animation: specialIn .5s cubic-bezier(.2,1.6,.4,1); }
+.modfx-slot.bad { border-color: var(--red); box-shadow: 0 0 80px rgba(255,75,75,.7); animation: shake .4s; }
+.modfx-slot.mixed { border-color: var(--gold); box-shadow: 0 0 80px rgba(255,198,26,.7); animation: specialIn .5s cubic-bezier(.2,1.6,.4,1); }
+.modfx-desc { font-size: clamp(18px, 2.6vw, 38px); color: var(--gold); min-height: 1.3em; }

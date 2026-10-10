@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { Server } = require('socket.io');
 const QRCode = require('qrcode');
+const Mods = require('./modifiers');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ONLINE = process.argv.includes('--online');
@@ -72,8 +73,12 @@ const S = {
   chooser: null,
   q: null,
   final: null,
+  mods: {},             // модификаторы текущего раунда: "t:i" -> id
+  modsPerRound: 3,
   mediaOnPhones: ONLINE, // играть музыку/видео прямо на телефонах (нужно, когда игроки не в одной комнате)
 };
+
+S.modsPerRound = S.pack?.modifiersPerRound ?? 3;
 
 const uid = () => crypto.randomBytes(8).toString('hex');
 
@@ -101,7 +106,8 @@ function roundLeft() {
 function view(role, playerId) {
   const host = role === 'host';
   const v = {
-    now: Date.now(), role, you: playerId || null, phase: S.phase, maxPlayers: MAX_PLAYERS, mediaOnPhones: S.mediaOnPhones,
+    now: Date.now(), modList: Mods.publicList, modsPerRound: host ? S.modsPerRound : undefined,
+    role, you: playerId || null, phase: S.phase, maxPlayers: MAX_PLAYERS, mediaOnPhones: S.mediaOnPhones,
     packs: host ? listPacks() : undefined, packId: S.packId,
     pack: S.pack ? { title: S.pack.title, subtitle: S.pack.subtitle, roundsCount: S.pack.rounds.length, hasFinal: !!S.pack.final } : null,
     players: S.players.map(p => ({ id: p.id, name: p.name, score: p.score, online: isOnline(p.id) })),
@@ -114,7 +120,7 @@ function view(role, playerId) {
       name: r.name,
       themes: r.themes.map((t, ti) => ({
         name: t.name,
-        cells: t.questions.map((q, qi) => ({ price: q.price, used: !!S.used[`${S.roundIndex}:${ti}:${qi}`] })),
+        cells: t.questions.map((q, qi) => ({ price: q.price, used: !!S.used[`${S.roundIndex}:${ti}:${qi}`], mod: host ? S.mods[`${ti}:${qi}`] : undefined })),
       })),
     };
   }
@@ -133,6 +139,8 @@ function view(role, playerId) {
       answerImage: showAnswer ? q.answerImage : null, answerAudio: showAnswer ? q.answerAudio : null, answerVideo: showAnswer ? q.answerVideo : null,
       comment: showAnswer ? q.comment : null,
       stakeMin: q.stakeMin, stakeMax: q.stakeMax,
+      hasMod: !!q.mod, mod: host || q.modOwner ? q.mod : null, modOwner: q.modOwner,
+      ...(host && q.answering ? previewDeltas(q) : {}),
     };
   }
 
@@ -247,6 +255,7 @@ function openQuestion(t, i) {
   S.q = {
     ...q, t, i, theme: r.themes[t].name, value: q.price, tried: [], answering: null, target: null, buzzOpenedAt: null,
     buzzDeadline: null, answerDeadline: null, lock: {}, race: {}, buzzAt: null,
+    mod: (q.type || 'normal') === 'normal' ? S.mods[`${t}:${i}`] || null : null, modOwner: null, modDone: false,
     stage: q.type === 'cat' ? 'cat-pick' : q.type === 'stake' ? 'stake-bet' : 'reading',
   };
   if (q.type === 'stake') {
@@ -307,12 +316,33 @@ function undo() {
   return true;
 }
 
+// ---------- модификаторы ----------
+
+function assignMods() {
+  const r = round();
+  S.mods = r ? Mods.assignRound(r, S.modsPerRound) : {};
+}
+
+// модификатор действует, только если отвечает тот, кто его «поймал», и только один раз
+const modActive = q => q.mod && q.modOwner === q.answering && !q.modDone;
+
+function previewDeltas(q) {
+  if (!modActive(q)) return { rightDelta: q.value, wrongDelta: -q.value };
+  const r = Mods.judgeDelta(q.mod, q.value, true, q.answering, S.players);
+  return { rightDelta: r.delta, wrongDelta: Mods.judgeDelta(q.mod, q.value, false, q.answering, S.players).delta, stealFrom: r.steal?.from };
+}
+
 function judge(correct) {
   const q = S.q;
   if (!q || q.stage !== 'answering' || !q.answering) return;
   snapshot();
   const p = player(q.answering);
-  if (p) p.score += correct ? q.value : -q.value;
+  if (modActive(q)) {
+    const r = Mods.judgeDelta(q.mod, q.value, correct, q.answering, S.players);
+    if (p) p.score += r.delta;
+    if (r.steal) player(r.steal.from).score -= r.steal.amount;
+    q.modDone = true;
+  } else if (p) p.score += correct ? q.value : -q.value;
   if (correct) {
     S.chooser = q.answering;
     q.stage = 'reveal';
@@ -415,6 +445,15 @@ io.on('connection', socket => {
     }
     if (q.stage !== 'buzz') return;
     if (q.lock[id] > now) return socket.emit('false-start', q.lock[id] - now);
+    if (q.mod && !q.modOwner) {
+      // первый нажавший «ловит» модификатор
+      snapshot();
+      q.modOwner = id;
+      const bonus = Mods.instantDelta(q.mod, q.value);
+      if (bonus) player(id).score += bonus;
+      setAnswering(q, id);
+      return broadcast({ kind: 'mod', id, mod: q.mod });
+    }
     setAnswering(q, id);
     broadcast({ kind: 'buzz', id });
   });
@@ -445,15 +484,17 @@ io.on('connection', socket => {
     const q = S.q, f = S.final;
     switch (a.type) {
       case 'mediaOnPhones': S.mediaOnPhones = !!a.on; break;
+      case 'modsPerRound': S.modsPerRound = Math.max(0, Math.min(10, Math.round((Number(a.n) || 0) / 2) * 2)); break; // чётное: поровну хороших и плохих
       case 'setPack':
         if (S.phase !== 'lobby') return;
-        try { S.pack = loadPack(a.id); S.packId = a.id; } catch (e) { return toast(socket, `Не удалось загрузить пак: ${e.message}`); }
+        try { S.pack = loadPack(a.id); S.packId = a.id; S.modsPerRound = S.pack.modifiersPerRound ?? 3; } catch (e) { return toast(socket, `Не удалось загрузить пак: ${e.message}`); }
         break;
       case 'start':
         if (!S.pack) return toast(socket, 'Нет пака');
         if (!S.players.length) return toast(socket, 'Нет ни одного игрока');
         S.phase = 'board'; S.roundIndex = 0; S.used = {}; S.q = null; S.final = null; history.length = 0;
         S.chooser = S.players[Math.floor(Math.random() * S.players.length)].id;
+        assignMods();
         return broadcast({ kind: 'round' });
       case 'kick':
         S.players = S.players.filter(p => p.id !== a.id);
@@ -487,10 +528,10 @@ io.on('connection', socket => {
       case 'back': closeQuestion(); break;
       case 'nextRound':
         closeQuestion();
-        if (S.roundIndex + 1 < S.pack.rounds.length) { S.roundIndex++; S.phase = 'board'; return broadcast({ kind: 'round' }); }
+        if (S.roundIndex + 1 < S.pack.rounds.length) { S.roundIndex++; S.phase = 'board'; assignMods(); return broadcast({ kind: 'round' }); }
         return startFinal();
       case 'prevRound':
-        if (S.roundIndex > 0) { closeQuestion(); S.roundIndex--; S.phase = 'board'; }
+        if (S.roundIndex > 0) { closeQuestion(); S.roundIndex--; S.phase = 'board'; assignMods(); }
         break;
       case 'final': return startFinal();
       case 'finalRemove': {

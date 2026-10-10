@@ -63,7 +63,7 @@ function renderBoard(s, clickable) {
   return `<div class="board ${clickable ? 'clickable' : ''}" style="--cols:${cols}">
     ${r.themes.map((t, ti) => `<div class="theme">${esc(t.name)}</div>${t.cells.map((c, qi) =>
       clickable && !c.used
-        ? `<button class="cell" data-t="${ti}" data-i="${qi}">${c.price}</button>`
+        ? `<button class="cell" data-t="${ti}" data-i="${qi}">${c.price}${c.mod ? `<span class="cellmod" title="${esc(s.modList[c.mod].name)}">${s.modList[c.mod].emoji}</span>` : ''}</button>`
         : `<div class="cell ${c.used ? 'used' : ''}">${c.used ? '' : c.price}</div>`
     ).join('')}`).join('')}
   </div>`;
@@ -95,6 +95,7 @@ function renderQuestion(s, { host = false, noSound = false } = {}) {
   }
   let h = `<div class="question">${meta}`;
   if (q.type === 'cat' && q.catTheme) h += `<div class="badge">Тема: ${esc(q.catTheme)}</div>`;
+  h += modBadge(s, { host });
   h += `<div class="text">${esc(q.text)}</div>${renderMedia(q, '', { noSound })}`;
   if (q.answer != null) {
     h += `<div class="answer">${host && q.stage !== 'reveal' ? '<span class="muted" style="font-size:.5em;display:block">ответ (видишь только ты)</span>' : ''}${esc(q.answer)}</div>`;
@@ -222,4 +223,47 @@ function roundIntro(s) {
   const total = 0.6 + r.themes.length * 0.45 + 2.2;
   setTimeout(() => el.classList.add('out'), total * 1000);
   setTimeout(() => el.remove(), total * 1000 + 600);
+}
+
+// ---------- модификаторы ----------
+
+const modClass = m => m.good === true ? 'good' : m.good === false ? 'bad' : 'mixed';
+
+function modBadge(s, { host = false } = {}) {
+  const q = s.q;
+  if (!q.hasMod) return '';
+  if (q.mod && (q.modOwner || host)) {
+    const m = s.modList[q.mod];
+    const who = q.modOwner ? `${esc(pname(q.modOwner))}: ` : '<span style="opacity:.7">(видишь только ты)</span> ';
+    return `<div class="modbadge ${modClass(m)}">${m.emoji} ${who}<b>${esc(m.name)}</b> — ${esc(m.desc)}</div>`;
+  }
+  return `<div class="modbadge mystery">🎲 В вопросе модификатор! Хороший или плохой — узнает тот, кто нажмёт первым</div>`;
+}
+
+// «Рулетка»: прокручиваем модификаторы и останавливаемся на выпавшем
+function modReveal(s, ev) {
+  const list = Object.values(s.modList), m = s.modList[ev.mod];
+  if (!m) return;
+  document.querySelector('.modfx')?.remove();
+  const el = document.createElement('div');
+  el.className = 'modfx';
+  el.innerHTML = `<div class="modfx-who">${esc(pname(ev.id))} ${ev.id === s.you ? '(ты!)' : ''} ловит модификатор…</div>
+    <div class="modfx-slot"><span class="e"></span><span class="n"></span></div><div class="modfx-desc"></div>`;
+  el.onclick = () => el.remove();
+  document.body.appendChild(el);
+  const e = el.querySelector('.e'), n = el.querySelector('.n'), slot = el.querySelector('.modfx-slot');
+  let k = 0, delay = 50;
+  (function spin() {
+    const x = list[k++ % list.length];
+    e.textContent = x.emoji; n.textContent = x.name;
+    beep([500 + (k % 5) * 80], 0.03, 'square', 0, 0.06);
+    if (delay < 260) { delay *= 1.15; return setTimeout(spin, delay); }
+    e.textContent = m.emoji; n.textContent = m.name;
+    slot.className = 'modfx-slot ' + modClass(m);
+    el.querySelector('.modfx-desc').textContent = m.desc;
+    (m.good === false ? SFX.wrong : m.good ? SFX.right : SFX.special)();
+    if (m.good) confetti(1500);
+    setTimeout(() => el.classList.add('out'), 2600);
+    setTimeout(() => el.remove(), 3200);
+  })();
 }

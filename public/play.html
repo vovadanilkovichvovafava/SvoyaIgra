@@ -91,6 +91,7 @@
       else if (ev.kind === 'end') playFx(ev);
       else if (ev.kind === 'timeout') SFX.timeout();
       if (ev.kind === 'round') { SFX.round(); roundIntro(state); }
+      if (ev.kind === 'mod') { navigator.vibrate?.(200); modReveal(state, ev); }
     });
 
     $('#joinBtn').onclick = () => {
