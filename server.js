@@ -645,7 +645,7 @@ function setStake(amount) {
   broadcast({ kind: 'stake-set' });
 }
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, () => { // без адреса: и IPv4, и IPv6 (в Docker localhost бывает ::1)
   const ip = lanAddress();
   console.log(`\n  🎂 Своя игра запущена!\n`);
   console.log(`  Ведущий:      http://localhost:${PORT}/host${KEY_FROM_ENV ? '   (ключ из HOST_KEY)' : ''}`);
