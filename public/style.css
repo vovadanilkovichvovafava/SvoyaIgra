@@ -232,3 +232,5 @@ canvas.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 40; 
 .modfx-slot.bad { border-color: var(--red); box-shadow: 0 0 80px rgba(255,75,75,.7); animation: shake .4s; }
 .modfx-slot.mixed { border-color: var(--gold); box-shadow: 0 0 80px rgba(255,198,26,.7); animation: specialIn .5s cubic-bezier(.2,1.6,.4,1); }
 .modfx-desc { font-size: clamp(18px, 2.6vw, 38px); color: var(--gold); min-height: 1.3em; }
+
+.score .eff { font-size: .85em; filter: drop-shadow(0 0 4px rgba(255,255,255,.6)); }

@@ -52,7 +52,8 @@ function renderScores(s, { compact = false } = {}) {
     if (q && q.answering === p.id) cls.push('answering');
     if (q && q.tried?.includes(p.id)) cls.push('tried');
     if (!p.online) cls.push('offline');
-    return `<div class="${cls.join(' ')}"><div class="name">${esc(p.name)}</div><div class="pts ${p.score < 0 ? 'neg' : ''}">${p.score}</div></div>`;
+    const eff = s.effects?.[p.id] && s.modList[s.effects[p.id]];
+    return `<div class="${cls.join(' ')}"><div class="name">${esc(p.name)}${eff ? ` <span class="eff" title="${esc(eff.name)}: ${esc(eff.desc)}">${eff.emoji}</span>` : ''}</div><div class="pts ${p.score < 0 ? 'neg' : ''}">${p.score}</div></div>`;
   }).join('')}</div>`;
 }
 
@@ -82,10 +83,11 @@ function renderMedia(o, prefix = '', { noSound = false } = {}) {
   return h;
 }
 
-const TYPE_LABEL = { cat: 'Кот в мешке', stake: 'Вопрос со ставкой' };
+const TYPE_LABEL = { cat: 'Кот в мешке', stake: 'Вопрос со ставкой', mod: 'Модификатор' };
 
 function renderQuestion(s, { host = false, noSound = false } = {}) {
   const q = s.q;
+  if (q.type === 'mod') return renderModCell(s, { host });
   const meta = `<div class="meta">${esc(q.theme)} · ${q.value}${q.type !== 'normal' ? ' · ' + TYPE_LABEL[q.type] : ''}</div>`;
   if (q.stage === 'cat-pick' && !host) {
     return `<div class="question"><div class="special">Кот в мешке<small>${esc(pname(s.chooser))} отдаёт вопрос другому игроку</small></div></div>`;
@@ -95,7 +97,7 @@ function renderQuestion(s, { host = false, noSound = false } = {}) {
   }
   let h = `<div class="question">${meta}`;
   if (q.type === 'cat' && q.catTheme) h += `<div class="badge">Тема: ${esc(q.catTheme)}</div>`;
-  h += modBadge(s, { host });
+  h += effectBadge(s);
   h += `<div class="text">${esc(q.text)}</div>${renderMedia(q, '', { noSound })}`;
   if (q.answer != null) {
     h += `<div class="answer">${host && q.stage !== 'reveal' ? '<span class="muted" style="font-size:.5em;display:block">ответ (видишь только ты)</span>' : ''}${esc(q.answer)}</div>`;
@@ -110,13 +112,14 @@ function statusLine(s) {
   if (!q) return '';
   switch (q.stage) {
     case 'reading': return 'Читаем вопрос… кнопки пока закрыты';
-    case 'buzz': return 'Кнопки открыты — жми!' + timerBar(q.buzzDeadline, 10);
+    case 'buzz': return (q.type === 'mod' ? 'Кто рискнёт? Жми!' : 'Кнопки открыты — жми!') + timerBar(q.buzzDeadline, 10);
     case 'answering': {
       const race = Object.entries(q.race || {}).sort((a, b) => a[1] - b[1])
         .map(([id, ms]) => `${esc(pname(id))} +${(ms / 1000).toFixed(2)} с`).join(' · ');
       return `Отвечает: <b>${esc(pname(q.answering))}</b>${race ? ` <span class="muted" style="font-size:.8em">(опоздали: ${race})</span>` : ''}` + timerBar(q.answerDeadline, 15, 'answer');
     }
-    case 'reveal': return 'Правильный ответ';
+    case 'reveal': return q.type === 'mod' ? 'Никто не рискнул — модификатор сгорел' : 'Правильный ответ';
+    case 'mod-done': return `<b>${esc(pname(q.modOwner))}</b> забирает модификатор`;
     case 'cat-pick': return 'Кому отдать кота?';
     case 'stake-bet': return `${esc(pname(q.target))} делает ставку…`;
   }
@@ -229,15 +232,28 @@ function roundIntro(s) {
 
 const modClass = m => m.good === true ? 'good' : m.good === false ? 'bad' : 'mixed';
 
-function modBadge(s, { host = false } = {}) {
+// Ячейка-модификатор: только слово «МОДИФИКАТОР», после нажатия — что выпало
+function renderModCell(s, { host = false } = {}) {
   const q = s.q;
-  if (!q.hasMod) return '';
-  if (q.mod && (q.modOwner || host)) {
+  let h = '<div class="question"><div class="special">Модификатор';
+  if (q.stage === 'buzz') h += `<small>Жми, если рискнёшь!</small>`;
+  h += '</div>';
+  if (host && q.mod && !q.modOwner) h += `<div class="muted">(видишь только ты: ${s.modList[q.mod].emoji} ${esc(s.modList[q.mod].name)})</div>`;
+  if (q.modOwner && q.mod) {
     const m = s.modList[q.mod];
-    const who = q.modOwner ? `${esc(pname(q.modOwner))}: ` : '<span style="opacity:.7">(видишь только ты)</span> ';
-    return `<div class="modbadge ${modClass(m)}">${m.emoji} ${who}<b>${esc(m.name)}</b> — ${esc(m.desc)}</div>`;
+    h += `<div class="modbadge ${modClass(m)}">${m.emoji} ${esc(pname(q.modOwner))}: <b>${esc(m.name)}</b> — ${esc(m.desc)}</div>`;
+    if (q.mod !== 'flip') h += `<div class="comment">Действует на следующий ответ игрока</div>`;
   }
-  return `<div class="modbadge mystery">🎲 В вопросе модификатор! Хороший или плохой — узнает тот, кто нажмёт первым</div>`;
+  if (q.stage === 'reveal') h += `<div class="comment">Никто не рискнул — модификатор сгорел</div>`;
+  return h + '</div>';
+}
+
+// В обычном вопросе: напоминание, если у отвечающего есть модификатор
+function effectBadge(s) {
+  const q = s.q, id = q.answering, eff = id && s.effects?.[id];
+  if (!eff) return '';
+  const m = s.modList[eff];
+  return `<div class="modbadge ${modClass(m)}">${m.emoji} ${esc(pname(id))}: <b>${esc(m.name)}</b> — ${esc(m.desc)}</div>`;
 }
 
 // «Рулетка»: прокручиваем модификаторы и останавливаемся на выпавшем

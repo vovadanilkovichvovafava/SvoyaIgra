@@ -186,6 +186,8 @@
       }
 
       if (s.phase === 'question' && ['buzz', 'answering'].includes(s.q.stage)) info += statusLine(s).match(/<div class="tbar[\s\S]*$/)?.[0] || '';
+      const myEff = s.effects?.[me.id] && s.modList[s.effects[me.id]];
+      if (myEff && s.phase !== 'end') info += `<div class="modbadge ${modClass(myEff)}" style="margin-top:8px;font-size:15px">${myEff.emoji} У тебя: <b>${esc(myEff.name)}</b> — ${esc(myEff.desc)} (на следующий ответ)</div>`;
       setHTML($('#info'), info);
       setHTML($('#q'), q);
       setForm(form.key, form.html, () => $('#form input, #form textarea')?.focus());
@@ -203,7 +205,7 @@
       if (q.stage === 'buzz') return { cls: '', text: 'Ты уже<br>отвечал' };
       if (q.stage === 'answering' && q.answering === me) return { cls: 'mine', text: 'ОТВЕЧАЙ!' };
       if (q.stage === 'answering') return { cls: 'other', text: `Отвечает<br>${esc(pname(q.answering))}` };
-      if (q.stage === 'reveal') return null;
+      if (q.stage === 'reveal' || q.stage === 'mod-done') return null;
       return { cls: '', text: 'Ждём…' };
     }
 

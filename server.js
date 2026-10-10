@@ -74,6 +74,7 @@ const S = {
   q: null,
   final: null,
   mods: {},             // модификаторы текущего раунда: "t:i" -> id
+  effects: {},          // пойманные модификаторы, ждущие следующего ответа игрока: playerId -> modId
   modsPerRound: 2,
   neutralPerRound: 1,
   usedMods: [],          // уже пойманные за игру — больше не выпадают
@@ -109,7 +110,7 @@ function roundLeft() {
 function view(role, playerId) {
   const host = role === 'host';
   const v = {
-    now: Date.now(), modList: Mods.publicList, modsPerRound: host ? S.modsPerRound : undefined, usedMods: S.usedMods, neutralPerRound: host ? S.neutralPerRound : undefined,
+    now: Date.now(), modList: Mods.publicList, modsPerRound: host ? S.modsPerRound : undefined, usedMods: S.usedMods, effects: S.effects, neutralPerRound: host ? S.neutralPerRound : undefined,
     role, you: playerId || null, phase: S.phase, maxPlayers: MAX_PLAYERS, mediaOnPhones: S.mediaOnPhones,
     packs: host ? listPacks() : undefined, packId: S.packId,
     pack: S.pack ? { title: S.pack.title, subtitle: S.pack.subtitle, roundsCount: S.pack.rounds.length, hasFinal: !!S.pack.final } : null,
@@ -142,7 +143,7 @@ function view(role, playerId) {
       answerImage: showAnswer ? q.answerImage : null, answerAudio: showAnswer ? q.answerAudio : null, answerVideo: showAnswer ? q.answerVideo : null,
       comment: showAnswer ? q.comment : null,
       stakeMin: q.stakeMin, stakeMax: q.stakeMax,
-      hasMod: !!q.mod, mod: host || q.modOwner ? q.mod : null, modOwner: q.modOwner,
+      mod: host || q.modOwner ? q.mod : null, modOwner: q.modOwner,
       ...(host && q.answering ? previewDeltas(q) : {}),
     };
   }
@@ -255,10 +256,17 @@ function openQuestion(t, i) {
   const q = r?.themes[t]?.questions[i];
   if (!q || S.used[`${S.roundIndex}:${t}:${i}`]) return;
   S.phase = 'question';
+  const modId = S.mods[`${t}:${i}`];
+  if (modId) {
+    // ячейка-модификатор: вопроса нет, кнопки открыты сразу, кто первый нажал — забирает модификатор
+    S.q = { t, i, type: 'mod', mod: modId, modOwner: null, theme: r.themes[t].name, price: q.price, value: 0,
+      text: null, answer: null, tried: [], answering: null, lock: {}, race: {} };
+    openBuzz(S.q);
+    return broadcast({ kind: 'mod-open' });
+  }
   S.q = {
     ...q, t, i, theme: r.themes[t].name, value: q.price, tried: [], answering: null, target: null, buzzOpenedAt: null,
     buzzDeadline: null, answerDeadline: null, lock: {}, race: {}, buzzAt: null,
-    mod: (q.type || 'normal') === 'normal' ? S.mods[`${t}:${i}`] || null : null, modOwner: null, modDone: false,
     stage: q.type === 'cat' ? 'cat-pick' : q.type === 'stake' ? 'stake-bet' : 'reading',
   };
   if (q.type === 'stake') {
@@ -305,7 +313,7 @@ function setAnswering(q, id) {
 
 const history = [];
 function snapshot() {
-  history.push(JSON.stringify({ players: S.players, q: S.q, chooser: S.chooser, used: S.used, phase: S.phase, final: S.final, usedMods: S.usedMods }));
+  history.push(JSON.stringify({ players: S.players, q: S.q, chooser: S.chooser, used: S.used, phase: S.phase, final: S.final, usedMods: S.usedMods, effects: S.effects }));
   if (history.length > 30) history.shift();
 }
 function undo() {
@@ -314,7 +322,7 @@ function undo() {
   const o = JSON.parse(snap);
   // восстанавливаем очки, но не трогаем список игроков (кто-то мог подключиться)
   for (const p of S.players) { const old = o.players.find(x => x.id === p.id); if (old) p.score = old.score; }
-  Object.assign(S, { q: o.q, chooser: o.chooser, used: o.used, phase: o.phase, final: o.final, usedMods: o.usedMods || [] });
+  Object.assign(S, { q: o.q, chooser: o.chooser, used: o.used, phase: o.phase, final: o.final, usedMods: o.usedMods || [], effects: o.effects || {} });
   if (S.q && S.q.stage === 'buzz') openBuzz(S.q);
   return true;
 }
@@ -326,13 +334,12 @@ function assignMods() {
   S.mods = r ? Mods.assignRound(r, S.modsPerRound, S.neutralPerRound, S.usedMods) : {};
 }
 
-// модификатор действует, только если отвечает тот, кто его «поймал», и только один раз
-const modActive = q => q.mod && q.modOwner === q.answering && !q.modDone;
-
+// пойманный модификатор действует на следующий ответ игрока (любой вопрос), потом сгорает
 function previewDeltas(q) {
-  if (!modActive(q)) return { rightDelta: q.value, wrongDelta: -q.value };
-  const r = Mods.judgeDelta(q.mod, q.value, true, q.answering, S.players);
-  return { rightDelta: r.delta, wrongDelta: Mods.judgeDelta(q.mod, q.value, false, q.answering, S.players).delta, stealFrom: r.steal?.from };
+  const eff = S.effects[q.answering];
+  if (!eff) return { rightDelta: q.value, wrongDelta: -q.value };
+  const r = Mods.judgeDelta(eff, q.value, true, q.answering, S.players);
+  return { rightDelta: r.delta, wrongDelta: Mods.judgeDelta(eff, q.value, false, q.answering, S.players).delta, stealFrom: r.steal?.from };
 }
 
 function judge(correct) {
@@ -340,11 +347,12 @@ function judge(correct) {
   if (!q || q.stage !== 'answering' || !q.answering) return;
   snapshot();
   const p = player(q.answering);
-  if (modActive(q)) {
-    const r = Mods.judgeDelta(q.mod, q.value, correct, q.answering, S.players);
+  const eff = S.effects[q.answering];
+  if (eff) {
+    const r = Mods.judgeDelta(eff, q.value, correct, q.answering, S.players);
     if (p) p.score += r.delta;
     if (r.steal) player(r.steal.from).score -= r.steal.amount;
-    q.modDone = true;
+    delete S.effects[q.answering];
   } else if (p) p.score += correct ? q.value : -q.value;
   if (correct) {
     S.chooser = q.answering;
@@ -448,13 +456,15 @@ io.on('connection', socket => {
     }
     if (q.stage !== 'buzz') return;
     if (q.lock[id] > now) return socket.emit('false-start', q.lock[id] - now);
-    if (q.mod && !q.modOwner) {
-      // первый нажавший «ловит» модификатор
+    if (q.type === 'mod') {
+      // первый нажавший забирает модификатор
       snapshot();
+      clearTimeout(buzzTimer);
       q.modOwner = id;
-      Mods.onCatch(q.mod, player(id));
+      q.stage = 'mod-done';
       S.usedMods.push(q.mod);
-      setAnswering(q, id);
+      if (Mods.MODS[q.mod].flip) Mods.onCatch(q.mod, player(id)); // срабатывает сразу
+      else S.effects[id] = q.mod;                                   // ждёт следующего ответа
       return broadcast({ kind: 'mod', id, mod: q.mod });
     }
     setAnswering(q, id);
@@ -496,7 +506,7 @@ io.on('connection', socket => {
       case 'start':
         if (!S.pack) return toast(socket, 'Нет пака');
         if (!S.players.length) return toast(socket, 'Нет ни одного игрока');
-        S.phase = 'board'; S.roundIndex = 0; S.used = {}; S.q = null; S.final = null; history.length = 0; S.usedMods = [];
+        S.phase = 'board'; S.roundIndex = 0; S.used = {}; S.q = null; S.final = null; history.length = 0; S.usedMods = []; S.effects = {};
         S.chooser = S.players[Math.floor(Math.random() * S.players.length)].id;
         assignMods();
         return broadcast({ kind: 'round' });
@@ -575,7 +585,7 @@ io.on('connection', socket => {
       }
       case 'end': return endGame();
       case 'reset':
-        S.phase = 'lobby'; S.q = null; S.final = null; S.used = {}; S.roundIndex = 0; S.usedMods = [];
+        S.phase = 'lobby'; S.q = null; S.final = null; S.used = {}; S.roundIndex = 0; S.usedMods = []; S.effects = {};
         S.players.forEach(p => { p.score = 0; });
         break;
       default: return;

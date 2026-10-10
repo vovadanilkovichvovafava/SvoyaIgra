@@ -133,7 +133,7 @@
         if ((k === 'y' || k === 'н') && q.stage === 'answering') return send('judge', { correct: true });
         if ((k === 'n' || k === 'т') && q.stage === 'answering') return send('judge', { correct: false });
         if ((k === 'r' || k === 'к') && q.stage !== 'reveal') return send('reveal');
-        if (k === 'enter' && q.stage === 'reveal') return send('back');
+        if (k === 'enter' && (q.stage === 'reveal' || q.stage === 'mod-done')) return send('back');
       }
     });
 
@@ -160,7 +160,7 @@
       setHTML($('#plist'), s.players.map(p => `
         <div class="panel pcard ${q && q.answering === p.id ? 'answering' : ''}">
           <div class="top">
-            <div><span class="dot ${p.online ? '' : 'off'}"></span><b>${esc(p.name)}</b>${p.id === s.chooser ? ' <span class="badge">✋ выбирает</span>' : ''}</div>
+            <div><span class="dot ${p.online ? '' : 'off'}"></span><b>${esc(p.name)}</b>${s.effects?.[p.id] ? ` <span class="badge" title="${esc(s.modList[s.effects[p.id]].desc)}">${s.modList[s.effects[p.id]].emoji} ${esc(s.modList[s.effects[p.id]].name)}</span>` : ''}${p.id === s.chooser ? ' <span class="badge">✋ выбирает</span>' : ''}</div>
             <button class="btn small" title="Удалить" onclick="kick('${p.id}')">✕</button>
           </div>
           <div class="row" style="justify-content:space-between;margin-top:6px">
@@ -257,16 +257,17 @@
         c += `<button class="btn" data-a="reveal">Показать ответ</button>`;
       } else if (q.stage === 'buzz') {
         c += `<span class="muted" style="animation:pulse 1s infinite">Ждём, кто нажмёт…</span>`;
-        c += `<button class="btn" data-a="reveal">Никто не знает — показать ответ</button>`;
+        c += q.type === 'mod' ? `<button class="btn" data-a="reveal">Никто не берёт — сжечь модификатор</button>`
+          : `<button class="btn" data-a="reveal">Никто не знает — показать ответ</button>`;
       } else if (q.stage === 'answering') {
         const fmt = n => (n >= 0 ? '+' : '−') + Math.abs(n);
         c += `<button class="btn green big" data-a="judge" ${x({ correct: true })}>✓ Верно ${fmt(q.rightDelta)}${q.stealFrom ? ` (у ${esc(pname(q.stealFrom))})` : ''}</button>
               <button class="btn red big" data-a="judge" ${x({ correct: false })}>✗ Неверно ${fmt(q.wrongDelta)}</button>`;
         if (q.type === 'normal') c += `<button class="btn" data-a="openBuzz" title="Без штрафа">Сбросить, открыть кнопки</button>`;
-      } else if (q.stage === 'reveal') {
+      } else if (q.stage === 'reveal' || q.stage === 'mod-done') {
         c += `<button class="btn primary big" data-a="back">← К табло</button>`;
       }
-      if (q.stage !== 'reveal') c += `<button class="btn small" data-a="back" style="margin-left:auto">Закрыть вопрос</button>`;
+      if (q.stage !== 'reveal' && q.stage !== 'mod-done') c += `<button class="btn small" data-a="back" style="margin-left:auto">Закрыть вопрос</button>`;
       setHTML($('#controls'), c + '</div>');
     }
 
