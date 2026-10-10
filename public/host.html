@@ -204,9 +204,10 @@
             <div class="muted">До ${s.maxPlayers} игроков. Подключено: ${s.players.length}</div>
             <div class="muted" style="font-size:14px">Потренироваться одному: открой тестовых игроков в отдельных вкладках —
               ${[1, 2, 3, 4].map(n => `<a href="/play?slot=${n}" target="_blank" style="color:var(--gold)">Игрок ${n}</a>`).join(' · ')}</div>
-            <label class="row" style="gap:8px">Модификаторов в раунде:
-              <input type="number" id="modsIn" min="0" max="10" step="2" value="${s.modsPerRound}" style="width:80px;padding:6px 10px">
-              <span class="muted" style="font-size:14px">поровну хороших и плохих, спрятаны в случайных вопросах</span></label>
+            <div class="row" style="gap:8px">Модификаторы в раунде:
+              <label class="row" style="gap:6px">± <input type="number" id="modsIn" min="0" max="10" step="2" value="${s.modsPerRound}" style="width:70px;padding:6px 10px"></label>
+              <label class="row" style="gap:6px">нейтральных <input type="number" id="neutralIn" min="0" max="5" value="${s.neutralPerRound}" style="width:70px;padding:6px 10px"></label>
+              <span class="muted" style="font-size:14px">± — поровну положительных и отрицательных</span></div>
             <label class="row" style="gap:8px;cursor:pointer"><input type="checkbox" id="mediaChk" ${s.mediaOnPhones ? 'checked' : ''} style="width:20px;height:20px">
               <span>Музыка и видео на телефонах игроков <span class="muted">(включи, если играете удалённо)</span></span></label>
             <label class="stack" style="gap:6px;margin-top:8px"><span class="muted">Пак вопросов</span>
@@ -218,6 +219,8 @@
       if (sel) sel.onchange = () => send('setPack', { id: sel.value });
       const modsIn = $('#modsIn');
       if (modsIn) modsIn.onchange = () => send('modsPerRound', { n: +modsIn.value });
+      const neutralIn = $('#neutralIn');
+      if (neutralIn) neutralIn.onchange = () => send('neutralPerRound', { n: +neutralIn.value });
       const chk = $('#mediaChk');
       if (chk) chk.onchange = () => send('mediaOnPhones', { on: chk.checked });
       setHTML($('#controls'), `<div class="row"><button class="btn primary big" data-a="start" ${s.players.length ? '' : 'disabled'}>Начать игру ▶</button>
@@ -228,6 +231,7 @@
       setHTML($('#main'), `<h2 style="margin-bottom:12px">${esc(s.round.name)}</h2>${renderBoard(s, true)}`);
       const done = s.roundLeft === 0;
       setHTML($('#controls'), `
+        ${s.usedMods?.length ? `<div class="muted" style="margin-bottom:6px">Уже выпали (больше не будет): ${s.usedMods.map(id => `${s.modList[id].emoji} ${esc(s.modList[id].name)}`).join(' · ')}</div>` : ''}
         <div class="status">${s.chooser ? `Выбирает: <b>${esc(pname(s.chooser))}</b> — игрок может нажать на вопрос у себя на телефоне, или нажми сам` : 'Нажми на вопрос'}</div>
         ${done ? `<div class="row">${s.roundIndex + 1 < s.pack.roundsCount
           ? '<button class="btn primary big" data-a="nextRound">Следующий раунд →</button>'

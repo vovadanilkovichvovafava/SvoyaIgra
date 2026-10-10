@@ -74,11 +74,14 @@ const S = {
   q: null,
   final: null,
   mods: {},             // модификаторы текущего раунда: "t:i" -> id
-  modsPerRound: 3,
+  modsPerRound: 2,
+  neutralPerRound: 1,
+  usedMods: [],          // уже пойманные за игру — больше не выпадают
   mediaOnPhones: ONLINE, // играть музыку/видео прямо на телефонах (нужно, когда игроки не в одной комнате)
 };
 
-S.modsPerRound = S.pack?.modifiersPerRound ?? 3;
+S.modsPerRound = S.pack?.modifiersPerRound ?? 2;
+S.neutralPerRound = S.pack?.neutralModifiersPerRound ?? 1;
 
 const uid = () => crypto.randomBytes(8).toString('hex');
 
@@ -106,7 +109,7 @@ function roundLeft() {
 function view(role, playerId) {
   const host = role === 'host';
   const v = {
-    now: Date.now(), modList: Mods.publicList, modsPerRound: host ? S.modsPerRound : undefined,
+    now: Date.now(), modList: Mods.publicList, modsPerRound: host ? S.modsPerRound : undefined, usedMods: S.usedMods, neutralPerRound: host ? S.neutralPerRound : undefined,
     role, you: playerId || null, phase: S.phase, maxPlayers: MAX_PLAYERS, mediaOnPhones: S.mediaOnPhones,
     packs: host ? listPacks() : undefined, packId: S.packId,
     pack: S.pack ? { title: S.pack.title, subtitle: S.pack.subtitle, roundsCount: S.pack.rounds.length, hasFinal: !!S.pack.final } : null,
@@ -302,7 +305,7 @@ function setAnswering(q, id) {
 
 const history = [];
 function snapshot() {
-  history.push(JSON.stringify({ players: S.players, q: S.q, chooser: S.chooser, used: S.used, phase: S.phase, final: S.final }));
+  history.push(JSON.stringify({ players: S.players, q: S.q, chooser: S.chooser, used: S.used, phase: S.phase, final: S.final, usedMods: S.usedMods }));
   if (history.length > 30) history.shift();
 }
 function undo() {
@@ -311,7 +314,7 @@ function undo() {
   const o = JSON.parse(snap);
   // восстанавливаем очки, но не трогаем список игроков (кто-то мог подключиться)
   for (const p of S.players) { const old = o.players.find(x => x.id === p.id); if (old) p.score = old.score; }
-  Object.assign(S, { q: o.q, chooser: o.chooser, used: o.used, phase: o.phase, final: o.final });
+  Object.assign(S, { q: o.q, chooser: o.chooser, used: o.used, phase: o.phase, final: o.final, usedMods: o.usedMods || [] });
   if (S.q && S.q.stage === 'buzz') openBuzz(S.q);
   return true;
 }
@@ -320,7 +323,7 @@ function undo() {
 
 function assignMods() {
   const r = round();
-  S.mods = r ? Mods.assignRound(r, S.modsPerRound) : {};
+  S.mods = r ? Mods.assignRound(r, S.modsPerRound, S.neutralPerRound, S.usedMods) : {};
 }
 
 // модификатор действует, только если отвечает тот, кто его «поймал», и только один раз
@@ -449,8 +452,8 @@ io.on('connection', socket => {
       // первый нажавший «ловит» модификатор
       snapshot();
       q.modOwner = id;
-      const bonus = Mods.instantDelta(q.mod, q.value);
-      if (bonus) player(id).score += bonus;
+      Mods.onCatch(q.mod, player(id));
+      S.usedMods.push(q.mod);
       setAnswering(q, id);
       return broadcast({ kind: 'mod', id, mod: q.mod });
     }
@@ -484,15 +487,16 @@ io.on('connection', socket => {
     const q = S.q, f = S.final;
     switch (a.type) {
       case 'mediaOnPhones': S.mediaOnPhones = !!a.on; break;
+      case 'neutralPerRound': S.neutralPerRound = Math.max(0, Math.min(5, Math.round(Number(a.n) || 0))); break;
       case 'modsPerRound': S.modsPerRound = Math.max(0, Math.min(10, Math.round((Number(a.n) || 0) / 2) * 2)); break; // чётное: поровну хороших и плохих
       case 'setPack':
         if (S.phase !== 'lobby') return;
-        try { S.pack = loadPack(a.id); S.packId = a.id; S.modsPerRound = S.pack.modifiersPerRound ?? 3; } catch (e) { return toast(socket, `Не удалось загрузить пак: ${e.message}`); }
+        try { S.pack = loadPack(a.id); S.packId = a.id; S.modsPerRound = S.pack.modifiersPerRound ?? 2; S.neutralPerRound = S.pack.neutralModifiersPerRound ?? 1; } catch (e) { return toast(socket, `Не удалось загрузить пак: ${e.message}`); }
         break;
       case 'start':
         if (!S.pack) return toast(socket, 'Нет пака');
         if (!S.players.length) return toast(socket, 'Нет ни одного игрока');
-        S.phase = 'board'; S.roundIndex = 0; S.used = {}; S.q = null; S.final = null; history.length = 0;
+        S.phase = 'board'; S.roundIndex = 0; S.used = {}; S.q = null; S.final = null; history.length = 0; S.usedMods = [];
         S.chooser = S.players[Math.floor(Math.random() * S.players.length)].id;
         assignMods();
         return broadcast({ kind: 'round' });
@@ -571,7 +575,7 @@ io.on('connection', socket => {
       }
       case 'end': return endGame();
       case 'reset':
-        S.phase = 'lobby'; S.q = null; S.final = null; S.used = {}; S.roundIndex = 0;
+        S.phase = 'lobby'; S.q = null; S.final = null; S.used = {}; S.roundIndex = 0; S.usedMods = [];
         S.players.forEach(p => { p.score = 0; });
         break;
       default: return;

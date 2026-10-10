@@ -1,7 +1,8 @@
 {
   "title": "С днём рождения!",
   "subtitle": "✏️ Праздничный выпуск в честь ИМЯ",
-  "modifiersPerRound": 4,
+  "modifiersPerRound": 2,
+  "neutralModifiersPerRound": 1,
 
   "rounds": [
     {
