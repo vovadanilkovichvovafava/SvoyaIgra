@@ -653,7 +653,7 @@ server.listen(PORT, () => { // без адреса: и IPv4, и IPv6 (в Docker 
   console.log(`  Игроки:       http://${ip}:${PORT}/play   (тот же Wi‑Fi)\n`);
   if (!S.pack) console.log('  ⚠️  Не найден ни один пак в папке packs/\n');
   if (ONLINE) startTunnel();
-  if (!KEY_FROM_ENV && !isLocalMachine()) console.log('  ⚠️  Похоже, это сервер в интернете, а HOST_KEY не задан. Ключ ведущего:', HOST_KEY, '\n');
+  if (!KEY_FROM_ENV) console.log(`  🔑 Ключ ведущего (нужен, если открываешь /host не с этого компьютера): ${HOST_KEY}\n`);
 });
 
 // ---------- публичная ссылка через Cloudflare (бесплатно, без регистрации) ----------
@@ -681,11 +681,6 @@ function startTunnel() {
   const stop = () => { proc.kill(); process.exit(0); };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
-}
-
-// Похоже ли, что мы на хостинге (а не на домашнем ноутбуке)
-function isLocalMachine() {
-  return !process.env.PORT || process.env.NODE_ENV !== 'production';
 }
 
 // Хостинг останавливает приложение сигналом SIGTERM — закрываемся аккуратно
