@@ -219,6 +219,11 @@ function lanAddress() {
 }
 
 const server = http.createServer(async (req, res) => {
+  // проверка «жив ли сервер» для хостинга
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    return res.end('ok');
+  }
   if (req.url.startsWith('/api/join-info')) {
     const lan = `http://${lanAddress()}:${PORT}/play`;
     // на хостинге берём адрес сайта из запроса; дома (localhost) — IP в локальной сети
@@ -648,6 +653,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`  Игроки:       http://${ip}:${PORT}/play   (тот же Wi‑Fi)\n`);
   if (!S.pack) console.log('  ⚠️  Не найден ни один пак в папке packs/\n');
   if (ONLINE) startTunnel();
+  if (!KEY_FROM_ENV && !isLocalMachine()) console.log('  ⚠️  Похоже, это сервер в интернете, а HOST_KEY не задан. Ключ ведущего:', HOST_KEY, '\n');
 });
 
 // ---------- публичная ссылка через Cloudflare (бесплатно, без регистрации) ----------
@@ -675,4 +681,14 @@ function startTunnel() {
   const stop = () => { proc.kill(); process.exit(0); };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
+}
+
+// Похоже ли, что мы на хостинге (а не на домашнем ноутбуке)
+function isLocalMachine() {
+  return !process.env.PORT || process.env.NODE_ENV !== 'production';
+}
+
+// Хостинг останавливает приложение сигналом SIGTERM — закрываемся аккуратно
+if (!ONLINE) {
+  process.on('SIGTERM', () => { io.close(); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 3000).unref(); });
 }
