@@ -1,0 +1,19 @@
+{
+  "name": "svoya-igra",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Своя игра — веб-версия для домашней вечеринки",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node check-pack.js",
+    "online": "node server.js --online"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

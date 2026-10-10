@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Своя игра — экран</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { padding: 2vh 2vw; min-height: 100vh; display: flex; flex-direction: column; gap: 2vh; }
+    #main { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+    #status { text-align: center; font-size: clamp(16px, 2vw, 30px); min-height: 1.4em; }
+    .lobby { display: flex; align-items: center; justify-content: center; gap: 5vw; flex-wrap: wrap; text-align: center; }
+    .lobby .qr { background: #fff; padding: 14px; border-radius: 20px; width: min(340px, 70vw); }
+    .lobby .qr img { width: 100%; display: block; }
+    .round-title { text-align: center; font-size: clamp(20px, 2.4vw, 36px); margin-bottom: 1.5vh; }
+    .fanswers { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 2vh; }
+    .fanswer { text-align: center; padding: 18px; }
+    .fanswer .a { font-size: clamp(18px, 2vw, 30px); font-weight: 700; margin: 8px 0; min-height: 1.3em; }
+    #fs { position: fixed; right: 12px; bottom: 12px; opacity: .35; }
+    #fs:hover { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div id="main"></div>
+  <div id="status"></div>
+  <div id="scores"></div>
+  <button class="btn small" id="fs" onclick="document.documentElement.requestFullscreen?.()">⛶ Во весь экран</button>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/common.js"></script>
+  <script>
+    let joinInfo = null;
+    const loadJoinInfo = () => fetch('/api/join-info').then(r => r.json()).then(j => { joinInfo = j; state && render(state); });
+    loadJoinInfo();
+    socket.on('join-info-changed', loadJoinInfo);
+    socket.on('connect', () => socket.emit('hello', { role: 'screen' }));
+    socket.on('state', s => { state = s; render(s); });
+    socket.on('fx', playFx);
+
+    function render(s) {
+      const main = $('#main');
+      setHTML($('#scores'), s.phase === 'lobby' || s.phase === 'end' ? '' : renderScores(s));
+      setHTML($('#status'), s.phase === 'question' ? statusLine(s) : s.phase === 'board' && s.chooser ? `Выбирает <b>${esc(pname(s.chooser))}</b>` : '');
+
+      if (s.phase === 'lobby') {
+        return setHTML(main, `<div class="lobby">
+          <div class="qr">${joinInfo ? `<img src="${joinInfo.qr}" alt="QR">` : ''}</div>
+          <div class="stack" style="align-items:center">
+            <h1 class="title-glow" style="font-size:clamp(40px,7vw,110px)">${esc(s.pack?.title || 'Своя игра')}</h1>
+            ${s.pack?.subtitle ? `<div style="font-size:clamp(18px,2vw,30px)">${esc(s.pack.subtitle)}</div>` : ''}
+            <div class="muted" style="font-size:clamp(16px,1.6vw,24px)">Сканируй QR-код и вводи имя · ${esc(joinInfo?.url || '')}</div>
+            <div style="width:min(700px,90vw);margin-top:12px">${renderScores(s)}</div>
+          </div></div>`);
+      }
+      if (s.phase === 'board') return setHTML(main, `<div class="round-title title-glow">${esc(s.round.name)}</div>${renderBoard(s, false)}`);
+      if (s.phase === 'question') {
+        if (setHTML(main, renderQuestion(s))) main.querySelectorAll('audio,video').forEach(m => m.play().catch(() => {}));
+        return;
+      }
+      if (s.phase === 'final') return setHTML(main, renderFinalScreen(s));
+      if (s.phase === 'end') return setHTML(main, renderFinale(s));
+    }
+
+    function renderFinalScreen(s) {
+      const f = s.final;
+      let h = `<div class="round-title title-glow">Финал</div>`;
+      if (f.stage === 'themes') {
+        return h + `<div class="final-themes" style="max-width:900px;margin:0 auto;width:100%">${f.themes.map((t, i) =>
+          `<div class="final-theme ${f.removed.includes(i) ? 'removed' : ''}">${esc(t)}</div>`).join('')}</div>`;
+      }
+      h += `<div class="final-themes" style="max-width:900px;margin:0 auto 2vh;width:100%"><div class="final-theme chosen">${esc(f.themes[f.chosen])}</div></div>`;
+      if (f.stage === 'bets') {
+        return h + `<div style="text-align:center;font-size:clamp(20px,2.4vw,36px)">Делаем ставки на телефонах…<br>
+          ${f.participants.map(id => `${esc(pname(id))} ${f.betDone[id] ? '✅' : '⏳'}`).join(' · ')}</div>`;
+      }
+      if (f.question) {
+        h += `<div class="question" style="min-height:auto"><div class="text">${esc(f.question.text)}</div>${renderMedia(f.question)}
+          ${f.stage === 'question' ? `<div class="timer" style="font-size:clamp(28px,4vw,60px)" id="ftimer"></div>` : ''}
+          ${f.answer ? `<div class="answer">${esc(f.answer)}</div>` : ''}</div>`;
+      }
+      if (f.stage === 'question') {
+        h += `<div style="text-align:center;margin-top:2vh;font-size:clamp(16px,2vw,28px)">${f.participants.map(id => `${esc(pname(id))} ${f.answerDone[id] ? '✍️' : '⏳'}`).join(' · ')}</div>`;
+      }
+      if (f.stage === 'reveal') {
+        h += `<div class="fanswers">${f.participants.map(id => {
+          const j = f.judged[id], open = f.opened[id];
+          return `<div class="panel fanswer" style="${j === true ? 'border-color:var(--green)' : j === false ? 'border-color:var(--red)' : ''}">
+            <div class="muted">${esc(pname(id))}</div>
+            <div class="a">${open ? esc(f.answers[id] || '(без ответа)') : '❓'}</div>
+            <div>${open ? `ставка ${f.bets[id]}` : ''} ${j === true ? '✅' : j === false ? '❌' : ''}</div></div>`;
+        }).join('')}</div>`;
+      }
+      return h;
+    }
+
+    setInterval(() => {
+      const el = $('#ftimer'), f = state?.final;
+      if (el && f?.deadline) { const left = Math.max(0, Math.ceil((f.deadline - Date.now()) / 1000)); el.textContent = left > 0 ? left : 'Время!'; }
+    }, 250);
+  </script>
+</body>
+</html>

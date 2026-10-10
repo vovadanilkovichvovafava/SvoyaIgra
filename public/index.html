@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Своя игра</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    main { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 24px 16px; text-align: center; }
+    h1 { font-size: clamp(44px, 9vw, 110px); }
+    .choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; width: min(820px, 100%); }
+    .choice { text-decoration: none; color: inherit; display: flex; flex-direction: column; gap: 6px; padding: 26px 18px; }
+    .choice .e { font-size: 44px; }
+    .choice b { font-size: 22px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div>
+      <h1 class="title-glow">Своя <span class="gold">игра</span></h1>
+      <div class="badge" style="font-size:18px;margin-top:10px">Праздничный выпуск</div>
+    </div>
+    <div class="choices">
+      <a class="panel choice btn" href="/play"><b>Я игрок</b><span class="muted">с телефона</span></a>
+      <a class="panel choice btn" href="/host"><b>Я ведущий</b><span class="muted">управление игрой</span></a>
+      <a class="panel choice btn" href="/screen"><b>Экран</b><span class="muted">табло для ТВ</span></a>
+    </div>
+  </main>
+</body>
+</html>

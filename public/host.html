@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Своя игра — ведущий</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { padding: 16px; }
+    .layout { display: grid; grid-template-columns: 1fr 300px; gap: 16px; max-width: 1500px; margin: 0 auto; }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; max-width: 1500px; margin: 0 auto 14px; }
+    header h1 { font-size: 26px; }
+    .controls { position: sticky; bottom: 0; padding: 12px; margin-top: 12px; background: rgba(0,7,41,.94); backdrop-filter: blur(8px); border-radius: 4px; border: 1px solid var(--panel-border); }
+    .status { font-size: 18px; margin-bottom: 10px; }
+    .plist { display: flex; flex-direction: column; gap: 10px; }
+    .pcard { padding: 12px; }
+    .pcard .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .pcard .pts { font-size: 28px; font-weight: 900; color: #fff; }
+    .pcard .pts.neg { color: var(--red); }
+    .pcard.answering { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold), 0 0 30px rgba(255,198,26,.5); }
+    .pcard .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; background: var(--green); }
+    .pcard .dot.off { background: var(--muted); opacity: .5; }
+    .qr { background: #fff; padding: 10px; border-radius: 14px; width: 220px; }
+    .qr img { width: 100%; display: block; }
+    .ftable { width: 100%; border-collapse: collapse; }
+    .ftable td, .ftable th { padding: 10px 8px; border-bottom: 1px solid var(--panel-border); text-align: left; }
+    .busy { max-width: 480px; margin: 20vh auto; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="busy" class="panel busy hidden stack">
+    <h2>Ведущий уже подключён</h2>
+    <p class="muted">Игрой уже управляют с другого устройства или вкладки.</p>
+    <button class="btn primary" id="takeover">Стать ведущим здесь</button>
+  </div>
+
+  <form id="keyBox" class="panel busy hidden stack">
+    <h2>Вход для ведущего</h2>
+    <p class="muted">Введи ключ ведущего (HOST_KEY из настроек хостинга).</p>
+    <input type="text" id="keyIn" autocomplete="current-password" placeholder="Ключ" autofocus>
+    <button class="btn primary big" id="keyForm-btn">Войти</button>
+    <a class="muted" href="/play">Я игрок →</a>
+  </form>
+
+  <div id="app" class="hidden">
+    <header>
+      <h1><span class="title-glow">Своя <span class="gold">игра</span></span> <span class="muted" style="font-size:16px" id="hdr"></span></h1>
+      <div class="row">
+        <a class="btn small" href="/screen" target="_blank">📺 Открыть экран</a>
+        <button class="btn small" data-a="prevRound" id="bPrev">← Раунд</button>
+        <button class="btn small" data-a="nextRound" id="bNext">Раунд →</button>
+        <button class="btn small" data-a="final" id="bFinal">Финал</button>
+        <button class="btn small" data-a="end" id="bEnd">🎉 Финиш</button>
+        <button class="btn small red" id="bReset">Сбросить игру</button>
+      </div>
+    </header>
+    <div class="layout">
+      <section>
+        <div id="main"></div>
+        <div class="controls" id="controls"></div>
+      </section>
+      <aside class="stack">
+        <h3>Игроки <span class="muted" id="pcount"></span></h3>
+        <div class="plist" id="plist"></div>
+        <div class="panel muted" style="font-size:14px">
+          Нажми на очки игрока, чтобы задать их вручную. «✋» — передать выбор вопроса.
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/common.js"></script>
+  <script>
+    const send = (type, extra = {}) => socket.emit('host', { type, ...extra });
+    let joinInfo = null;
+    const loadJoinInfo = () => fetch('/api/join-info').then(r => r.json()).then(j => { joinInfo = j; state && render(state); });
+    loadJoinInfo();
+    socket.on('join-info-changed', loadJoinInfo);
+
+    const urlKey = new URLSearchParams(location.search).get('key');
+    if (urlKey) { storage('hostKey', urlKey); history.replaceState(null, '', '/host'); }
+    function hello(takeover) { socket.emit('hello', { role: 'host', hostToken: storage('hostToken'), hostKey: storage('hostKey'), takeover }); }
+    socket.on('host-key', k => storage('hostKey', k));
+    socket.on('host-denied', () => {
+      $('#app').classList.add('hidden'); $('#busy').classList.add('hidden');
+      $('#keyBox').classList.remove('hidden');
+      if (storage('hostKey')) toast('Неверный ключ ведущего');
+    });
+    $('#keyBox').onsubmit = e => {
+      e.preventDefault();
+      storage('hostKey', $('#keyIn').value.trim());
+      $('#keyBox').classList.add('hidden');
+      hello(false);
+    };
+    socket.on('host-token', () => $('#keyBox').classList.add('hidden'));
+
+    async function copyLink() {
+      const url = joinInfo?.url;
+      try { await navigator.clipboard.writeText(url); toast('Ссылка скопирована — отправь её игрокам'); }
+      catch { prompt('Скопируй ссылку:', url); }
+    }
+    function shareLink() {
+      navigator.share({ title: 'Своя игра', text: 'Заходи в «Свою игру»! 🎂', url: joinInfo.url }).catch(() => {});
+    }
+    socket.on('connect', () => hello(false));
+    socket.on('host-busy', () => { $('#busy').classList.remove('hidden'); $('#app').classList.add('hidden'); });
+    socket.on('host-token', t => { storage('hostToken', t); $('#busy').classList.add('hidden'); $('#app').classList.remove('hidden'); });
+    $('#takeover').onclick = () => hello(true);
+    socket.on('state', s => { state = s; render(s); });
+    socket.on('fx', playFx);
+
+    document.addEventListener('click', e => {
+      const b = e.target.closest('[data-a]');
+      if (b) {
+        const extra = b.dataset.x ? JSON.parse(b.dataset.x) : {};
+        return send(b.dataset.a, extra);
+      }
+      const cell = e.target.closest('.board .cell[data-t]');
+      if (cell) return send('open', { t: +cell.dataset.t, i: +cell.dataset.i });
+    });
+    $('#bReset').onclick = () => confirm('Сбросить игру? Очки обнулятся, игроки останутся.') && send('reset');
+
+    const x = obj => `data-x='${JSON.stringify(obj)}'`;
+
+    function render(s) {
+      $('#hdr').textContent = s.pack ? `· ${s.pack.title}` + (s.round ? ` · ${s.round.name}` : '') : '';
+      $('#pcount').textContent = `${s.players.length}/${s.maxPlayers}`;
+      const inGame = s.phase === 'board' || s.phase === 'question';
+      $('#bPrev').classList.toggle('hidden', !inGame || s.roundIndex === 0);
+      $('#bNext').classList.toggle('hidden', !inGame || s.roundIndex + 1 >= s.pack.roundsCount);
+      $('#bFinal').classList.toggle('hidden', !inGame || !s.pack.hasFinal);
+      $('#bEnd').classList.toggle('hidden', s.phase === 'lobby' || s.phase === 'end');
+      renderPlayers(s);
+      const fn = { lobby: renderLobby, board: renderBoardPhase, question: renderQuestionPhase, final: renderFinal, end: renderEnd }[s.phase];
+      fn(s);
+    }
+
+    function renderPlayers(s) {
+      const q = s.q;
+      setHTML($('#plist'), s.players.map(p => `
+        <div class="panel pcard ${q && q.answering === p.id ? 'answering' : ''}">
+          <div class="top">
+            <div><span class="dot ${p.online ? '' : 'off'}"></span><b>${esc(p.name)}</b>${p.id === s.chooser ? ' <span class="badge">✋ выбирает</span>' : ''}</div>
+            <button class="btn small" title="Удалить" onclick="kick('${p.id}')">✕</button>
+          </div>
+          <div class="row" style="justify-content:space-between;margin-top:6px">
+            <button class="pts ${p.score < 0 ? 'neg' : ''}" style="background:none;border:0;padding:0" onclick="editScore('${p.id}')">${p.score}</button>
+            <div class="row" style="gap:6px">
+              <button class="btn small" data-a="score" ${x({ id: p.id, delta: -100 })}>−100</button>
+              <button class="btn small" data-a="score" ${x({ id: p.id, delta: 100 })}>+100</button>
+              <button class="btn small" title="Передать выбор" data-a="chooser" ${x({ id: p.id })}>✋</button>
+            </div>
+          </div>
+        </div>`).join('') || '<div class="muted">Пока никого. Пусть игроки отсканируют QR-код.</div>');
+    }
+
+    function kick(id) { if (confirm(`Удалить игрока ${pname(id)}?`)) send('kick', { id }); }
+    function editBet(id) {
+      const p = state.players.find(p => p.id === id);
+      const v = prompt(`Ставка ${p.name} (0–${Math.max(0, p.score)}):`);
+      if (v != null && v.trim() !== '' && !isNaN(+v)) send('finalBet', { id, amount: +v });
+    }
+
+    function editScore(id) {
+      const p = state.players.find(p => p.id === id);
+      const v = prompt(`Очки игрока ${p.name}:`, p.score);
+      if (v != null && v.trim() !== '' && !isNaN(+v)) send('setScore', { id, value: +v });
+    }
+
+    function renderLobby(s) {
+      setHTML($('#main'), `
+        <div class="panel row" style="gap:24px;align-items:flex-start">
+          <div class="qr">${joinInfo ? `<img src="${joinInfo.qr}" alt="QR">` : ''}</div>
+          <div class="stack" style="flex:1;min-width:240px">
+            <h2>Подключение игроков</h2>
+            ${joinInfo && !joinInfo.ready ? '<div class="muted" style="animation:pulse 1s infinite">Создаю публичную ссылку…</div>' : `
+            <div class="muted">${joinInfo?.online ? 'Отправь эту ссылку игрокам — зайдут откуда угодно:' : 'Отсканируйте QR-код или откройте на телефоне (тот же Wi‑Fi):'}</div>
+            <div class="gold-text" style="font-size:22px;font-weight:700;word-break:break-all">${esc(joinInfo?.url || '…')}</div>
+            <div class="row">
+              <button class="btn primary" onclick="copyLink()">Скопировать ссылку</button>
+              ${navigator.share ? '<button class="btn" onclick="shareLink()">Поделиться…</button>' : ''}
+            </div>
+            ${joinInfo && !joinInfo.online ? '<div class="muted" style="font-size:14px">Нужна ссылка для игроков из других мест? Запусти игру командой <b>npm run online</b></div>' : ''}`}
+            <div class="muted">До ${s.maxPlayers} игроков. Подключено: ${s.players.length}</div>
+            <label class="row" style="gap:8px;cursor:pointer"><input type="checkbox" id="mediaChk" ${s.mediaOnPhones ? 'checked' : ''} style="width:20px;height:20px">
+              <span>Музыка и видео на телефонах игроков <span class="muted">(включи, если играете удалённо)</span></span></label>
+            <label class="stack" style="gap:6px;margin-top:8px"><span class="muted">Пак вопросов</span>
+              <select id="packSel">${(s.packs || []).map(p => `<option value="${esc(p.id)}" ${p.id === s.packId ? 'selected' : ''} ${p.broken ? 'disabled' : ''}>${esc(p.title)}</option>`).join('')}</select>
+            </label>
+          </div>
+        </div>`);
+      const sel = $('#packSel');
+      if (sel) sel.onchange = () => send('setPack', { id: sel.value });
+      const chk = $('#mediaChk');
+      if (chk) chk.onchange = () => send('mediaOnPhones', { on: chk.checked });
+      setHTML($('#controls'), `<div class="row"><button class="btn primary big" data-a="start" ${s.players.length ? '' : 'disabled'}>Начать игру ▶</button>
+        <span class="muted">${s.players.length ? 'Первым выбирает случайный игрок' : 'Ждём хотя бы одного игрока'}</span></div>`);
+    }
+
+    function renderBoardPhase(s) {
+      setHTML($('#main'), `<h2 style="margin-bottom:12px">${esc(s.round.name)}</h2>${renderBoard(s, true)}`);
+      const done = s.roundLeft === 0;
+      setHTML($('#controls'), `
+        <div class="status">${s.chooser ? `Выбирает: <b>${esc(pname(s.chooser))}</b> — игрок может нажать на вопрос у себя на телефоне, или нажми сам` : 'Нажми на вопрос'}</div>
+        ${done ? `<div class="row">${s.roundIndex + 1 < s.pack.roundsCount
+          ? '<button class="btn primary big" data-a="nextRound">Следующий раунд →</button>'
+          : s.pack.hasFinal ? '<button class="btn primary big" data-a="final">К финалу →</button>' : '<button class="btn primary big" data-a="end">🎉 Завершить игру</button>'}</div>` : ''}`);
+    }
+
+    function renderQuestionPhase(s) {
+      const q = s.q;
+      setHTML($('#main'), renderQuestion(s, { host: true }));
+      let c = `<div class="status">${statusLine(s)}</div><div class="row">`;
+      if (q.stage === 'cat-pick') {
+        c += `<span class="muted">Кому отдаёт ${esc(pname(s.chooser))}?</span>` +
+          s.players.filter(p => p.id !== s.chooser).map(p => `<button class="btn primary" data-a="catTarget" ${x({ id: p.id })}>${esc(p.name)}</button>`).join('') +
+          (s.players.length === 1 ? s.players.map(p => `<button class="btn primary" data-a="catTarget" ${x({ id: p.id })}>${esc(p.name)}</button>`).join('') : '');
+      } else if (q.stage === 'stake-bet') {
+        c += `<span class="muted">Играет:</span>${s.players.map(p => `<button class="btn small ${p.id === q.target ? 'gold' : ''}" data-a="stake" ${x({ target: p.id })}>${esc(p.name)}</button>`).join('')}
+          <span class="muted">· ставка ${q.stakeMin}–${q.stakeMax}</span>
+          <input type="number" id="stakeIn" style="width:130px" value="${q.stakeMin}" min="${q.stakeMin}" max="${q.stakeMax}">
+          <button class="btn primary" onclick="send('stake',{amount:+$('#stakeIn').value})">Принять ставку</button>
+          <span class="muted">(или игрок введёт её с телефона)</span>`;
+      } else if (q.stage === 'reading') {
+        c += `<button class="btn primary big" data-a="openBuzz">🔔 Открыть кнопки</button>`;
+        c += `<button class="btn" data-a="reveal">Показать ответ</button>`;
+      } else if (q.stage === 'buzz') {
+        c += `<span class="muted" style="animation:pulse 1s infinite">Ждём, кто нажмёт…</span>`;
+        c += `<button class="btn" data-a="reveal">Никто не знает — показать ответ</button>`;
+      } else if (q.stage === 'answering') {
+        c += `<button class="btn green big" data-a="judge" ${x({ correct: true })}>✓ Верно +${q.value}</button>
+              <button class="btn red big" data-a="judge" ${x({ correct: false })}>✗ Неверно −${q.value}</button>`;
+        if (q.type === 'normal') c += `<button class="btn" data-a="openBuzz" title="Без штрафа">Сбросить, открыть кнопки</button>`;
+      } else if (q.stage === 'reveal') {
+        c += `<button class="btn primary big" data-a="back">← К табло</button>`;
+      }
+      if (q.stage !== 'reveal') c += `<button class="btn small" data-a="back" style="margin-left:auto">Закрыть вопрос</button>`;
+      setHTML($('#controls'), c + '</div>');
+    }
+
+    function renderFinal(s) {
+      const f = s.final;
+      let m = `<h2 style="margin-bottom:12px">Финал</h2>`;
+      if (f.stage === 'themes') {
+        m += `<p class="muted">Игроки по очереди убирают темы. Нажми на тему, чтобы убрать её.</p><div class="final-themes">` +
+          f.themes.map((t, i) => f.removed.includes(i)
+            ? `<div class="final-theme removed">${esc(t)}</div>`
+            : `<button class="final-theme" data-a="finalRemove" ${x({ t: i })}>${esc(t)}</button>`).join('') + '</div>';
+      } else {
+        m += `<div class="final-themes" style="margin-bottom:14px"><div class="final-theme chosen">${esc(f.themes[f.chosen])}</div></div>`;
+        if (f.question) m += `<div class="question" style="min-height:auto"><div class="text">${esc(f.question.text)}</div>${renderMedia(f.question)}
+          <div class="answer"><span class="muted" style="font-size:.5em;display:block">ответ</span>${esc(f.answer)}</div></div>`;
+      }
+      m += `<table class="ftable" style="margin-top:14px"><tr><th>Игрок</th><th>Очки</th><th>Ставка</th><th>Ответ</th><th></th></tr>` +
+        f.participants.map(id => {
+          const p = s.players.find(p => p.id === id) || {};
+          const j = f.judged[id];
+          return `<tr><td><b>${esc(p.name)}</b></td><td>${p.score}</td>
+            <td>${f.bets[id] ?? (f.stage === 'bets' ? '<span class="muted">ждём…</span>' : '—')}
+              ${f.stage === 'bets' ? `<button class="btn small" onclick="editBet('${id}')">✎</button>` : ''}</td>
+            <td>${f.answers[id] != null ? esc(f.answers[id] || '(пусто)') : f.stage === 'question' ? '<span class="muted">пишет…</span>' : '—'}</td>
+            <td>${f.stage === 'reveal' ? (j == null ? `<div class="row" style="gap:6px">
+                ${f.opened[id] ? '' : `<button class="btn small" data-a="finalOpen" ${x({ id })}>Показать</button>`}
+                <button class="btn small green" data-a="finalJudge" ${x({ id, correct: true })}>✓</button>
+                <button class="btn small red" data-a="finalJudge" ${x({ id, correct: false })}>✗</button></div>` : j ? '✅' : '❌') : ''}</td></tr>`;
+        }).join('') + '</table>';
+      setHTML($('#main'), m);
+
+      let c = '<div class="row">';
+      if (f.stage === 'themes') c += `<span class="status">Убирайте темы, пока не останется одна</span>`;
+      if (f.stage === 'bets') {
+        const all = f.participants.every(id => f.betDone[id]);
+        c += `<span class="status">${all ? 'Все ставки сделаны' : 'Игроки делают ставки на телефонах…'}</span>
+          <button class="btn primary big" data-a="finalQuestion">Показать вопрос ▶</button>`;
+      }
+      if (f.stage === 'question') {
+        c += `<span class="status">Время: <span class="timer" id="ftimer"></span></span>
+          <button class="btn primary big" data-a="finalReveal">Вскрыть ответы</button>`;
+      }
+      if (f.stage === 'reveal') {
+        const all = f.participants.every(id => f.judged[id] != null);
+        c += all ? `<button class="btn gold big" data-a="end">🎉 Итоги и поздравление</button>` : `<span class="status">Открывай ответы по одному и отмечай ✓ / ✗</span>`;
+      }
+      setHTML($('#controls'), c + '</div>');
+    }
+
+    function renderEnd(s) {
+      setHTML($('#main'), renderFinale(s));
+      setHTML($('#controls'), `<div class="row"><button class="btn" onclick="confetti(5000)">🎊 Ещё конфетти</button></div>`);
+    }
+
+    setInterval(() => {
+      const el = $('#ftimer'), f = state?.final;
+      if (el && f?.deadline) { const left = Math.max(0, Math.ceil((f.deadline - Date.now()) / 1000)); el.textContent = left + ' с'; }
+    }, 250);
+  </script>
+</body>
+</html>

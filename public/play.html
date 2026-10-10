@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#000729">
+  <title>Своя игра — игрок</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { min-height: 100dvh; padding: 14px 16px 24px; display: flex; flex-direction: column; gap: 14px; user-select: none; -webkit-user-select: none; }
+    .me { display: flex; justify-content: space-between; align-items: center; }
+    .me .n { font-weight: 700; font-size: 20px; }
+    .me .n { text-transform: uppercase; }
+    .me .p { font-weight: 900; font-size: 30px; color: #fff; }
+    .me .p.neg { color: var(--red); }
+    #info { text-align: center; font-size: 18px; }
+    #q .question { min-height: auto; padding: 16px; gap: 10px; }
+    #q .question .text { font-size: clamp(18px, 5vw, 26px); }
+    #q .question .answer { font-size: clamp(18px, 5vw, 24px); }
+    #q .question img { max-height: 32vh; }
+    .buzzwrap { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 260px; }
+    .buzzer {
+      width: min(72vw, 340px); aspect-ratio: 1; border-radius: 50%; border: 0; font-size: clamp(26px, 8vw, 40px); font-weight: 800;
+      background: radial-gradient(circle at 35% 30%, #34407a, #111a52); color: #7f8cc4; border: 4px solid #3a4d9c; text-transform: uppercase;
+      box-shadow: 0 14px 0 #000519, 0 20px 40px rgba(0,0,0,.6); touch-action: manipulation; transition: transform .06s, box-shadow .06s;
+    }
+    .buzzer.live { background: radial-gradient(circle at 35% 30%, #ff7a7a, #c80f0f); color: #fff; border-color: #ffb3b3; text-shadow: 0 3px 0 rgba(0,0,0,.35); animation: pulse 0.9s infinite; }
+    .buzzer.live:active { transform: translateY(10px); box-shadow: 0 4px 0 #17122e, 0 8px 20px rgba(0,0,0,.5); animation: none; }
+    .buzzer.mine { background: radial-gradient(circle at 35% 30%, #ffe680, #e69a00); color: #1a1000; border-color: #fff1b8; animation: flash 1s infinite; }
+    .buzzer.other { background: radial-gradient(circle at 35% 30%, #2c50f0, #0a1c8c); color: #fff; border-color: var(--cell-line); font-size: clamp(18px, 6vw, 28px); }
+    .mini { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+    .mini span { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 99px; padding: 4px 12px; font-size: 14px; }
+    .mini b { color: #fff; }
+    .mini span { border-radius: 0; text-transform: uppercase; }
+    .join { margin: auto 0; }
+    textarea { width: 100%; min-height: 110px; background: #000a3a; border: 1px solid var(--cell-line); border-radius: 4px; padding: 12px; font: inherit; font-size: 18px; color: inherit; user-select: text; -webkit-user-select: text; }
+    input { user-select: text; -webkit-user-select: text; }
+    .pboard .board { grid-template-columns: minmax(70px, 1.5fr) repeat(var(--cols), 1fr); gap: 2px; padding: 2px; }
+    .pboard .board .theme, .pboard .board .cell { min-height: 44px; padding: 3px 4px; }
+    .pboard .board .theme { font-size: 10px; }
+    .pboard .board .cell { font-size: 16px; }
+    .pboard .board.clickable .cell:not(.used) { animation: cellIn .35s ease backwards, pulse 1.6s .4s infinite; }
+  </style>
+</head>
+<body>
+  <div id="joinView" class="join stack hidden">
+    <h1 class="title-glow" style="font-size:44px;text-align:center">Своя игра</h1>
+    <div class="panel stack">
+      <label class="stack" style="gap:6px"><span class="muted">Как тебя зовут?</span>
+        <input type="text" id="name" maxlength="20" autocomplete="nickname" placeholder="Имя" autofocus enterkeyhint="go"></label>
+      <button class="btn primary big" id="joinBtn">Войти в игру</button>
+    </div>
+  </div>
+
+  <div id="gameView" class="stack hidden" style="flex:1">
+    <div class="me panel" style="padding:10px 14px"><span class="n" id="myName"></span><span class="p" id="myScore"></span></div>
+    <div id="info"></div>
+    <div id="q"></div>
+    <div id="form"></div>
+    <div id="buzz" class="buzzwrap hidden"><button class="buzzer" id="buzzer">Ждём…</button></div>
+    <div id="mini" class="mini"></div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/common.js"></script>
+  <script>
+    let token = storage('playerToken');
+    const nameIn = $('#name');
+    nameIn.value = storage('playerName') || '';
+
+    socket.on('connect', () => socket.emit('hello', { role: 'player', token }));
+    socket.on('player-token', t => { token = t; storage('playerToken', t); });
+    socket.on('kicked', () => { toast('Ведущий удалил тебя из игры'); storage('playerToken', ''); token = null; });
+    socket.on('state', s => { state = s; render(s); });
+    socket.on('fx', ev => {
+      if (ev.kind === 'buzz' && ev.id === state?.you) { navigator.vibrate?.(200); SFX.buzz(); }
+      else if (ev.kind === 'right' && ev.id === state?.you) { SFX.right(); confetti(1800); }
+      else if (ev.kind === 'wrong' && ev.id === state?.you) { SFX.wrong(); navigator.vibrate?.([80, 60, 80]); }
+      else if (ev.kind === 'buzz-open') navigator.vibrate?.(40);
+      else if (ev.kind === 'end') playFx(ev);
+    });
+
+    $('#joinBtn').onclick = () => {
+      const name = nameIn.value.trim();
+      if (!name) return toast('Введи имя');
+      storage('playerName', name);
+      socket.emit('join', { name, token });
+    };
+    nameIn.onkeydown = e => { if (e.key === 'Enter') $('#joinBtn').click(); };
+    $('#buzzer').addEventListener('pointerdown', e => { e.preventDefault(); socket.emit('buzz'); });
+    $('#q').addEventListener('click', e => {
+      const cell = e.target.closest('.board .cell[data-t]');
+      if (cell) socket.emit('pick', { t: +cell.dataset.t, i: +cell.dataset.i });
+    });
+
+    // форма перерисовывается только когда меняется её «смысл», чтобы не стирать набранный текст
+    let formKey = null;
+    function setForm(key, html, after) {
+      if (key === formKey) return;
+      formKey = key;
+      $('#form').innerHTML = html || '';
+      after && after();
+    }
+
+    function render(s) {
+      const me = s.players.find(p => p.id === s.you);
+      $('#joinView').classList.toggle('hidden', !!me);
+      $('#gameView').classList.toggle('hidden', !me);
+      if (!me) return;
+
+      $('#myName').textContent = me.name;
+      $('#myScore').textContent = me.score;
+      $('#myScore').classList.toggle('neg', me.score < 0);
+      setHTML($('#mini'), s.players.filter(p => p.id !== me.id).map(p => `<span>${esc(p.name)} <b>${p.score}</b></span>`).join(''));
+
+      let info = '', q = '', buzz = null;
+      const form = { key: 'none' };
+
+      if (s.phase === 'lobby') info = `Ты в игре! Ждём начала…<br><span class="muted">Игроков: ${s.players.length}/${s.maxPlayers}</span>`;
+      else if (s.phase === 'board') {
+        const mine = s.chooser === me.id;
+        info = mine ? '<b class="gold-text">Твой выбор!</b> Нажми на вопрос' : `Выбирает <b>${esc(pname(s.chooser))}</b>`;
+        q = `<div class="pboard">${renderBoard(s, mine)}</div>`;
+      }
+      else if (s.phase === 'question') {
+        const sq = s.q;
+        q = renderQuestion(s, { noSound: !s.mediaOnPhones });
+        if (sq.stage === 'stake-bet' && sq.target === me.id) {
+          form.key = 'stake:' + sq.stakeMin + ':' + sq.stakeMax;
+          form.html = `<div class="panel stack"><b>Твоя ставка (${sq.stakeMin}–${sq.stakeMax})</b>
+            <input type="number" id="stakeIn" inputmode="numeric" value="${sq.stakeMin}" min="${sq.stakeMin}" max="${sq.stakeMax}">
+            <div class="row"><button class="btn small" onclick="$('#stakeIn').value=${sq.stakeMax}">Ва-банк</button>
+            <button class="btn primary" style="flex:1" onclick="socket.emit('stake', +$('#stakeIn').value)">Поставить</button></div></div>`;
+        } else if (sq.stage === 'cat-pick' || sq.stage === 'stake-bet') {
+          // показываем только сообщение в блоке вопроса
+        } else {
+          buzz = buzzerState(sq, me.id);
+        }
+      } else if (s.phase === 'final') {
+        const f = s.final, inFinal = f.participants.includes(me.id);
+        if (!inFinal) info = 'Финал! Ты болеешь за остальных 📣';
+        if (f.stage === 'themes') {
+          q = `<div class="final-themes">${f.themes.map((t, i) => `<div class="final-theme ${f.removed.includes(i) ? 'removed' : ''}">${esc(t)}</div>`).join('')}</div>`;
+          if (inFinal) info = 'Финал! Говорите ведущему, какую тему убрать';
+        } else {
+          q = `<div class="final-themes"><div class="final-theme chosen">${esc(f.themes[f.chosen])}</div></div>`;
+          if (f.question) q += `<div class="question" style="margin-top:10px"><div class="text">${esc(f.question.text)}</div>${renderMedia(f.question, '', { noSound: !s.mediaOnPhones })}${f.answer ? `<div class="answer">${esc(f.answer)}</div>` : ''}</div>`;
+        }
+        if (inFinal && f.stage === 'bets') {
+          if (f.bets[me.id] == null) {
+            const max = Math.max(0, me.score);
+            form.key = 'fbet';
+            form.html = `<div class="panel stack"><b>Ставка на финал (0–${max})</b>
+              <input type="number" id="fbetIn" inputmode="numeric" value="0" min="0" max="${max}">
+              <div class="row"><button class="btn small" onclick="$('#fbetIn').value=${max}">Ва-банк</button>
+              <button class="btn primary" style="flex:1" onclick="socket.emit('final-bet', +$('#fbetIn').value)">Поставить</button></div></div>`;
+          } else info = `Ставка принята: <b>${f.bets[me.id]}</b>. Ждём остальных…`;
+        }
+        if (inFinal && f.stage === 'question') {
+          form.key = 'fans';
+          form.html = `<div class="panel stack"><b>Твой ответ</b> <span class="muted">Осталось: <span class="timer" id="ftimer"></span></span>
+            <textarea id="fansIn" maxlength="200" placeholder="Пиши ответ…"></textarea>
+            <button class="btn primary big" onclick="socket.emit('final-answer', $('#fansIn').value); toast('Ответ отправлен — можно исправить до вскрытия')">Отправить</button></div>`;
+          info = f.answers[me.id] != null ? `Отправлено: «${esc(f.answers[me.id])}»` : `Ставка: <b>${f.bets[me.id]}</b>`;
+        }
+        if (inFinal && f.stage === 'reveal') {
+          const j = f.judged[me.id];
+          info = j == null ? 'Ведущий проверяет ответы…' : j ? '✅ Верно!' : '❌ Увы…';
+        }
+      } else if (s.phase === 'end') {
+        q = renderFinale(s);
+      }
+
+      setHTML($('#info'), info);
+      setHTML($('#q'), q);
+      setForm(form.key, form.html, () => $('#form input, #form textarea')?.focus());
+      $('#buzz').classList.toggle('hidden', !buzz);
+      if (buzz) {
+        const b = $('#buzzer');
+        b.className = 'buzzer ' + buzz.cls;
+        b.innerHTML = buzz.text;
+      }
+    }
+
+    function buzzerState(q, me) {
+      if (q.stage === 'buzz' && !q.tried.includes(me)) return { cls: 'live', text: 'ЖМИ!' };
+      if (q.stage === 'buzz') return { cls: '', text: 'Ты уже<br>отвечал' };
+      if (q.stage === 'answering' && q.answering === me) return { cls: 'mine', text: 'ОТВЕЧАЙ!' };
+      if (q.stage === 'answering') return { cls: 'other', text: `Отвечает<br>${esc(pname(q.answering))}` };
+      if (q.stage === 'reveal') return null;
+      return { cls: '', text: 'Ждём…' };
+    }
+
+    setInterval(() => {
+      const el = $('#ftimer'), f = state?.final;
+      if (el && f?.deadline) { const left = Math.max(0, Math.ceil((f.deadline - Date.now()) / 1000)); el.textContent = left > 0 ? left + ' с' : 'время вышло'; }
+    }, 250);
+  </script>
+</body>
+</html>

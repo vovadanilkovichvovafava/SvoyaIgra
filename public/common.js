@@ -1,0 +1,183 @@
+// Общие помощники для всех экранов
+const socket = io();
+let state = null;
+
+const $ = sel => document.querySelector(sel);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const pname = id => state?.players.find(p => p.id === id)?.name ?? '—';
+
+function toast(text, ms = 2600) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = text;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), ms);
+}
+socket.on('toast', t => toast(t));
+
+function storage(key, value) {
+  try {
+    if (value === undefined) return localStorage.getItem(key);
+    localStorage.setItem(key, value);
+  } catch { return null; }
+}
+
+// ---------- рендер ----------
+
+function renderScores(s, { compact = false } = {}) {
+  if (!s.players.length) return '<div class="muted">Ждём игроков…</div>';
+  const q = s.q;
+  return `<div class="scores">${s.players.map(p => {
+    const cls = ['score'];
+    if (p.id === s.chooser && s.phase === 'board') cls.push('chooser');
+    if (q && q.answering === p.id) cls.push('answering');
+    if (q && q.tried?.includes(p.id)) cls.push('tried');
+    if (!p.online) cls.push('offline');
+    return `<div class="${cls.join(' ')}"><div class="name">${esc(p.name)}</div><div class="pts ${p.score < 0 ? 'neg' : ''}">${p.score}</div></div>`;
+  }).join('')}</div>`;
+}
+
+function renderBoard(s, clickable) {
+  const r = s.round;
+  if (!r) return '';
+  const cols = Math.max(...r.themes.map(t => t.cells.length));
+  return `<div class="board ${clickable ? 'clickable' : ''}" style="--cols:${cols}">
+    ${r.themes.map((t, ti) => `<div class="theme">${esc(t.name)}</div>${t.cells.map((c, qi) =>
+      clickable && !c.used
+        ? `<button class="cell" data-t="${ti}" data-i="${qi}">${c.price}</button>`
+        : `<div class="cell ${c.used ? 'used' : ''}">${c.used ? '' : c.price}</div>`
+    ).join('')}`).join('')}
+  </div>`;
+}
+
+function renderMedia(o, prefix = '', { noSound = false } = {}) {
+  const img = o[prefix ? prefix + 'Image' : 'image'], aud = o[prefix ? prefix + 'Audio' : 'audio'], vid = o[prefix ? prefix + 'Video' : 'video'];
+  let h = '';
+  if (img) h += `<img src="${esc(img)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'muted',textContent:'[нет картинки: ${esc(img)}]'}))">`;
+  if (noSound) {
+    if (vid || aud) h += `<div class="badge">${vid ? '🎬 Смотрим' : '🎵 Слушаем'} на экране ведущего</div>`;
+    return h;
+  }
+  if (vid) h += `<video src="${esc(vid)}" controls playsinline></video>`;
+  if (aud) h += `<audio src="${esc(aud)}" controls></audio>`;
+  return h;
+}
+
+const TYPE_LABEL = { cat: 'Кот в мешке', stake: 'Вопрос со ставкой' };
+
+function renderQuestion(s, { host = false, noSound = false } = {}) {
+  const q = s.q;
+  const meta = `<div class="meta">${esc(q.theme)} · ${q.value}${q.type !== 'normal' ? ' · ' + TYPE_LABEL[q.type] : ''}</div>`;
+  if (q.stage === 'cat-pick' && !host) {
+    return `<div class="question"><div class="special">Кот в мешке<small>${esc(pname(s.chooser))} отдаёт вопрос другому игроку</small></div></div>`;
+  }
+  if (q.stage === 'stake-bet' && !host) {
+    return `<div class="question"><div class="special">Вопрос со ставкой<small>${esc(pname(q.target))} ставит от ${q.stakeMin} до ${q.stakeMax}</small></div></div>`;
+  }
+  let h = `<div class="question">${meta}`;
+  if (q.type === 'cat' && q.catTheme) h += `<div class="badge">Тема: ${esc(q.catTheme)}</div>`;
+  h += `<div class="text">${esc(q.text)}</div>${renderMedia(q, '', { noSound })}`;
+  if (q.answer != null) {
+    h += `<div class="answer">${host && q.stage !== 'reveal' ? '<span class="muted" style="font-size:.5em;display:block">ответ (видишь только ты)</span>' : ''}${esc(q.answer)}</div>`;
+    if (q.stage === 'reveal' || host) h += renderMedia(q, 'answer', { noSound });
+    if (q.comment) h += `<div class="comment">${esc(q.comment)}</div>`;
+  }
+  return h + '</div>';
+}
+
+function statusLine(s) {
+  const q = s.q;
+  if (!q) return '';
+  switch (q.stage) {
+    case 'reading': return 'Читаем вопрос… кнопки пока закрыты';
+    case 'buzz': return 'Кнопки открыты — жми!';
+    case 'answering': return `Отвечает: <b>${esc(pname(q.answering))}</b>`;
+    case 'reveal': return 'Правильный ответ';
+    case 'cat-pick': return 'Кому отдать кота?';
+    case 'stake-bet': return `${esc(pname(q.target))} делает ставку…`;
+  }
+  return '';
+}
+
+function renderFinale(s) {
+  const f = s.finale || {};
+  const sorted = [...s.players].sort((a, b) => b.score - a.score);
+  const winner = sorted[0];
+  return `<div class="finale">
+    ${winner ? `<div class="badge" style="font-size:18px">Победитель: ${esc(winner.name)} — ${winner.score}</div>` : ''}
+    <h1>${esc(f.title || 'Игра окончена!')}</h1>
+    ${f.image ? `<img src="${esc(f.image)}" alt="" onerror="this.remove()">` : ''}
+    ${f.message ? `<div class="message">${esc(f.message)}</div>` : ''}
+    ${f.audio ? `<audio src="${esc(f.audio)}" controls autoplay></audio>` : ''}
+    <div style="width:min(800px,100%)">${renderScores(s)}</div>
+  </div>`;
+}
+
+// ---------- звуки (без файлов, синтез) ----------
+
+let actx;
+function beep(freqs, dur = 0.12, type = 'sine', gap = 0.02, vol = 0.18) {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    let t = actx.currentTime;
+    for (const f of [].concat(freqs)) {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = type; o.frequency.value = f;
+      g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur);
+      t += dur + gap;
+    }
+  } catch {}
+}
+const SFX = {
+  buzz: () => beep([880, 1320], 0.1, 'square', 0, 0.12),
+  right: () => beep([523, 659, 784, 1047], 0.1, 'triangle'),
+  wrong: () => beep([300, 200], 0.22, 'sawtooth', 0.03, 0.12),
+  open: () => beep([660], 0.08),
+  special: () => beep([784, 988, 1175, 988, 1175, 1568], 0.08, 'triangle'),
+  'buzz-open': () => beep([1200], 0.06, 'sine', 0, 0.1),
+  end: () => beep([523, 523, 587, 523, 698, 659], 0.18, 'triangle', 0.05), // «Happy Birthday» — первые ноты
+};
+// разблокируем звук на iOS первым касанием
+document.addEventListener('pointerdown', () => { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch {} }, { once: true });
+
+// ---------- конфетти ----------
+
+function confetti(duration = 4000) {
+  const c = document.createElement('canvas');
+  c.className = 'confetti';
+  document.body.appendChild(c);
+  const ctx = c.getContext('2d');
+  const W = (c.width = innerWidth), H = (c.height = innerHeight);
+  const colors = ['#ffd166', '#ff6fae', '#b28bff', '#3ddc97', '#6fc3ff', '#ffffff'];
+  const parts = Array.from({ length: 220 }, () => ({
+    x: Math.random() * W, y: -20 - Math.random() * H * 0.6, r: 4 + Math.random() * 6,
+    vx: -2 + Math.random() * 4, vy: 2 + Math.random() * 4, a: Math.random() * 6, va: -0.2 + Math.random() * 0.4,
+    c: colors[(Math.random() * colors.length) | 0],
+  }));
+  const start = performance.now();
+  (function frame(now) {
+    ctx.clearRect(0, 0, W, H);
+    for (const p of parts) {
+      p.x += p.vx; p.y += p.vy; p.a += p.va; p.vy += 0.03;
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.a); ctx.fillStyle = p.c;
+      ctx.fillRect(-p.r / 2, -p.r / 4, p.r, p.r / 2); ctx.restore();
+    }
+    if (now - start < duration) requestAnimationFrame(frame); else c.remove();
+  })(start);
+}
+
+function playFx(ev) {
+  if (!ev) return;
+  if (ev.kind === 'cat' || ev.kind === 'stake') SFX.special();
+  else if (SFX[ev.kind]) SFX[ev.kind]();
+  if (ev.kind === 'end') { confetti(7000); setTimeout(() => confetti(6000), 2500); }
+}
+
+// Перерисовываем блок только если разметка поменялась — иначе сбросятся видео/аудио и поля ввода
+function setHTML(el, html) {
+  if (el._html === html) return false;
+  el._html = html;
+  el.innerHTML = html;
+  return true;
+}
