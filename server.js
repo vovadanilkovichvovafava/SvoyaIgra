@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const { Server } = require('socket.io');
 const QRCode = require('qrcode');
 const Mods = require('./modifiers');
+const Auction = require('./auction');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ONLINE = process.argv.includes('--online');
@@ -132,7 +133,7 @@ function view(role, playerId) {
   if (S.q) {
     const q = S.q;
     const showAnswer = host || q.stage === 'reveal';
-    const hideQuestion = !host && (q.stage === 'cat-pick' || q.stage === 'stake-bet');
+    const hideQuestion = !host && (q.stage === 'cat-pick' || q.stage === 'stake-bet' || q.stage === 'auction');
     v.q = {
       t: q.t, i: q.i, theme: q.theme, price: q.price, type: q.type, stage: q.stage, value: q.value,
       catTheme: q.catTheme, target: q.target, answering: q.answering, tried: q.tried, buzzOpenedAt: q.buzzOpenedAt,
@@ -143,6 +144,7 @@ function view(role, playerId) {
       answerImage: showAnswer ? q.answerImage : null, answerAudio: showAnswer ? q.answerAudio : null, answerVideo: showAnswer ? q.answerVideo : null,
       comment: showAnswer ? q.comment : null,
       stakeMin: q.stakeMin, stakeMax: q.stakeMax,
+      auction: q.auction ? { ...q.auction, limits: q.auction.turn ? Auction.limits(q.auction, S.players, q.auction.turn) : null } : undefined,
       mod: host || q.modOwner ? q.mod : null, modOwner: q.modOwner,
       ...(host && q.answering ? previewDeltas(q) : {}),
     };
@@ -267,8 +269,9 @@ function openQuestion(t, i) {
   S.q = {
     ...q, t, i, theme: r.themes[t].name, value: q.price, tried: [], answering: null, target: null, buzzOpenedAt: null,
     buzzDeadline: null, answerDeadline: null, lock: {}, race: {}, buzzAt: null,
-    stage: q.type === 'cat' ? 'cat-pick' : q.type === 'stake' ? 'stake-bet' : 'reading',
+    stage: q.type === 'cat' ? 'cat-pick' : q.type === 'stake' ? 'stake-bet' : q.type === 'auction' ? 'auction' : 'reading',
   };
+  if (q.type === 'auction') S.q.auction = Auction.create(S.players, S.chooser || S.players[0]?.id, q.price);
   if (q.type === 'stake') {
     S.q.target = S.chooser;
     const p = player(S.chooser);
@@ -471,6 +474,11 @@ io.on('connection', socket => {
     broadcast({ kind: 'buzz', id });
   });
 
+  socket.on('auction', ({ action, amount } = {}) => {
+    const err = auctionAct(socket.data.playerId, action, amount);
+    if (err) toast(socket, err);
+  });
+
   socket.on('stake', amount => {
     const q = S.q;
     if (!q || q.stage !== 'stake-bet' || socket.data.playerId !== q.target) return;
@@ -525,6 +533,17 @@ io.on('connection', socket => {
         if (!q || q.stage !== 'cat-pick' || !player(a.id)) return;
         q.target = a.id; setAnswering(q, a.id);
         return broadcast({ kind: 'cat-target', id: a.id });
+      case 'auctionAct': { // ведущий ходит за игрока (если у того проблемы с телефоном)
+        const err = auctionAct(q?.auction?.turn, a.action, a.amount);
+        if (err) toast(socket, err);
+        return;
+      }
+      case 'auctionFinish': {
+        if (!q || q.stage !== 'auction') return;
+        const err = Auction.finish(q.auction);
+        if (err) return toast(socket, err);
+        return auctionDone();
+      }
       case 'stake':
         if (!q || q.stage !== 'stake-bet') return;
         if (a.target && player(a.target)) {
@@ -595,6 +614,24 @@ io.on('connection', socket => {
 
   socket.on('disconnect', () => broadcast());
 });
+
+function auctionAct(id, action, amount) {
+  const q = S.q;
+  if (!q || q.stage !== 'auction' || !id) return 'Сейчас не аукцион';
+  const err = Auction.act(q.auction, S.players, id, action, amount);
+  if (err) return err;
+  if (q.auction.done) return auctionDone();
+  broadcast({ kind: 'auction-bid' });
+  return null;
+}
+
+function auctionDone() {
+  const q = S.q;
+  q.value = q.auction.bet;
+  setAnswering(q, q.auction.leader);
+  broadcast({ kind: 'auction-won', id: q.auction.leader });
+  return null;
+}
 
 function setStake(amount) {
   const q = S.q;

@@ -252,6 +252,14 @@
           <input type="number" id="stakeIn" style="width:130px" value="${q.stakeMin}" min="${q.stakeMin}" max="${q.stakeMax}">
           <button class="btn primary" onclick="send('stake',{amount:+$('#stakeIn').value})">Принять ставку</button>
           <span class="muted">(или игрок введёт её с телефона)</span>`;
+      } else if (q.stage === 'auction') {
+        const a = q.auction, L = a.limits;
+        c += `<span class="muted">За ${esc(pname(a.turn))} (если не может с телефона):</span>
+          <input type="number" id="aucHost" style="width:120px" value="${L ? Math.min(L.max, a.bet == null ? L.min : a.bet + 100) : ''}" ${L ? `min="${L.min}" max="${L.max}"` : ''}>
+          <button class="btn" onclick="send('auctionAct', { action: 'bid', amount: +$('#aucHost').value })">Ставка</button>
+          <button class="btn gold" data-a="auctionAct" ${x({ action: 'allin' })}>Ва-банк</button>
+          ${a.bet == null ? '' : `<button class="btn red" data-a="auctionAct" ${x({ action: 'pass' })}>Пас</button>
+          <button class="btn primary" data-a="auctionFinish">Закрыть торги</button>`}`;
       } else if (q.stage === 'reading') {
         c += `<button class="btn primary big" data-a="openBuzz">🔔 Открыть кнопки</button>`;
         c += `<button class="btn" data-a="reveal">Показать ответ</button>`;

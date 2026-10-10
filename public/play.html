@@ -145,6 +145,20 @@
             <input type="number" id="stakeIn" inputmode="numeric" value="${sq.stakeMin}" min="${sq.stakeMin}" max="${sq.stakeMax}">
             <div class="row"><button class="btn small" onclick="$('#stakeIn').value=${sq.stakeMax}">Ва-банк</button>
             <button class="btn primary" style="flex:1" onclick="socket.emit('stake', +$('#stakeIn').value)">Поставить</button></div></div>`;
+        } else if (sq.stage === 'auction') {
+          const a = sq.auction;
+          if (a.turn === me.id && a.limits) {
+            const L = a.limits, def = Math.min(L.max, a.bet == null ? L.min : Math.ceil((a.bet + 100) / 100) * 100);
+            form.key = `auc:${a.bet}:${a.turn}`;
+            form.html = `<div class="panel stack"><b>Твой ход! ${a.bet == null ? 'Открой торги' : `Перебей ${a.bet}`}</b>
+              <span class="muted">Можно от ${L.min} до ${L.max}</span>
+              <div class="row"><button class="btn" onclick="$('#aucIn').value=Math.max(+$('#aucIn').value-100, ${L.min})">−100</button>
+                <input type="number" id="aucIn" inputmode="numeric" value="${def}" min="${L.min}" max="${L.max}" style="flex:1;width:auto">
+                <button class="btn" onclick="$('#aucIn').value=Math.min(+$('#aucIn').value+100, ${L.max})">+100</button></div>
+              <button class="btn primary big" onclick="socket.emit('auction', { action: 'bid', amount: +$('#aucIn').value })">Поставить</button>
+              <div class="row"><button class="btn gold" style="flex:1" onclick="socket.emit('auction', { action: 'allin' })">Ва-банк ${L.max}</button>
+                ${a.bet == null ? '' : `<button class="btn red" style="flex:1" onclick="socket.emit('auction', { action: 'pass' })">Пас</button>`}</div></div>`;
+          } else info = a.passed.includes(me.id) ? 'Ты спасовал — смотрим торги' : `Ходит <b>${esc(pname(a.turn))}</b>`;
         } else if (sq.stage === 'cat-pick' || sq.stage === 'stake-bet') {
           // показываем только сообщение в блоке вопроса
         } else {

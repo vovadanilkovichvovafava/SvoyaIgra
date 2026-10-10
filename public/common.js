@@ -83,7 +83,7 @@ function renderMedia(o, prefix = '', { noSound = false } = {}) {
   return h;
 }
 
-const TYPE_LABEL = { cat: 'Кот в мешке', stake: 'Вопрос со ставкой', mod: 'Модификатор' };
+const TYPE_LABEL = { cat: 'Кот в мешке', stake: 'Вопрос со ставкой', mod: 'Модификатор', auction: 'Аукцион' };
 
 function renderQuestion(s, { host = false, noSound = false } = {}) {
   const q = s.q;
@@ -95,7 +95,11 @@ function renderQuestion(s, { host = false, noSound = false } = {}) {
   if (q.stage === 'stake-bet' && !host) {
     return `<div class="question"><div class="special">Вопрос со ставкой<small>${esc(pname(q.target))} ставит от ${q.stakeMin} до ${q.stakeMax}</small></div></div>`;
   }
+  if (q.stage === 'auction' && !host) {
+    return `<div class="question"><div class="special">Аукцион<small>${esc(q.theme)} · от ${q.price}</small></div>${renderAuction(s)}</div>`;
+  }
   let h = `<div class="question">${meta}`;
+  if (q.stage === 'auction') h += renderAuction(s);
   if (q.type === 'cat' && q.catTheme) h += `<div class="badge">Тема: ${esc(q.catTheme)}</div>`;
   h += effectBadge(s);
   h += `<div class="text">${esc(q.text)}</div>${renderMedia(q, '', { noSound })}`;
@@ -122,6 +126,10 @@ function statusLine(s) {
     case 'mod-done': return `<b>${esc(pname(q.modOwner))}</b> забирает модификатор`;
     case 'cat-pick': return 'Кому отдать кота?';
     case 'stake-bet': return `${esc(pname(q.target))} делает ставку…`;
+    case 'auction': {
+      const a = q.auction;
+      return `Торги: ходит <b>${esc(pname(a.turn))}</b>` + (a.bet != null ? ` · ставка <b>${a.bet}</b> (${esc(pname(a.leader))})` : ' · первая ставка');
+    }
   }
   return '';
 }
@@ -282,4 +290,20 @@ function modReveal(s, ev) {
     setTimeout(() => el.classList.add('out'), 2600);
     setTimeout(() => el.remove(), 3200);
   })();
+}
+
+// ---------- аукцион ----------
+
+function renderAuction(s) {
+  const a = s.q.auction;
+  if (!a) return '';
+  const rows = a.order.map(id => {
+    let st = '<span class="muted">—</span>', cls = '';
+    if (id === a.leader) { st = `<b>${a.bet}</b>${a.allin ? ' ва-банк' : ''}`; cls = 'lead'; }
+    else if (a.passed.includes(id)) { st = 'пас'; cls = 'passed'; }
+    if (id === a.turn) { cls += ' turn'; st += ' <span class="tag">ходит</span>'; }
+    return `<div class="arow ${cls}"><span>${esc(pname(id))}</span><span>${st}</span></div>`;
+  }).join('');
+  const last = a.log.length ? `<div class="muted" style="font-size:.8em">${esc(a.log[a.log.length - 1])}</div>` : '';
+  return `<div class="auction">${rows}</div>${last}`;
 }
