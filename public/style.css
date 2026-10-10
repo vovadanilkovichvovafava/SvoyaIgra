@@ -183,3 +183,30 @@ button.final-theme:hover { filter: brightness(1.3); }
 .finale img { max-width: min(560px, 90vw); max-height: 45vh; border: 4px solid #fff; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
 
 canvas.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 40; }
+
+/* ---------- таймеры ---------- */
+.tbar { position: relative; height: 10px; margin: 8px auto 0; max-width: 700px; background: rgba(255,255,255,.08); border: 1px solid var(--panel-border); overflow: hidden; }
+.tbar i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, var(--cell-top), #7aa2ff); transition: width .1s linear; }
+.tbar.answer i { background: linear-gradient(90deg, #e09600, var(--gold-hot)); }
+.tbar.low i { background: var(--red); }
+.tbar span { display: none; }
+
+/* ---------- заставка раунда ---------- */
+.intro {
+  position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.2vh;
+  background: radial-gradient(ellipse at 50% 40%, #1430c4 0%, #020a3a 75%); padding: 16px; cursor: pointer;
+  transition: opacity .6s;
+}
+.intro.out { opacity: 0; }
+.intro-title { font-size: clamp(40px, 8vw, 130px); font-weight: 900; text-transform: uppercase; color: var(--gold);
+  text-shadow: 0 0 30px rgba(255,180,0,.6), 0 5px 0 #6b4500; animation: specialIn .6s cubic-bezier(.2,1.6,.4,1); margin-bottom: 2vh; }
+.intro-theme {
+  width: min(900px, 100%); text-align: center; padding: 1.4vh 16px; font-size: clamp(18px, 2.8vw, 44px); font-weight: 700; text-transform: uppercase;
+  background: linear-gradient(180deg, var(--cell-top), var(--cell-bot)); border: 1px solid var(--cell-line);
+  box-shadow: 0 0 30px rgba(60,110,255,.4); animation: themeIn .45s ease backwards;
+}
+@keyframes themeIn { from { opacity: 0; transform: translateX(-60px) scaleY(.3); } }
+
+/* фальстарт на телефоне */
+.buzzer.early { background: radial-gradient(circle at 35% 30%, #777, #333) !important; color: #ff8080 !important; animation: shake .3s !important; }
+@keyframes shake { 25% { transform: translateX(-10px); } 75% { transform: translateX(10px); } }

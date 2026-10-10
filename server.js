@@ -12,6 +12,9 @@ const PORT = Number(process.env.PORT) || 3000;
 const ONLINE = process.argv.includes('--online');
 const MAX_PLAYERS = 4;
 const FINAL_SECONDS = 60;
+const BUZZ_SECONDS = 10;     // сколько ждём нажатия после открытия кнопок, потом — показ ответа
+const ANSWER_SECONDS = 15;   // таймер на ответ (только показывается, решает ведущий)
+const FALSE_START_MS = 1000; // нажал до открытия кнопок — блокировка, как в передаче
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const PACKS_DIR = path.join(__dirname, 'packs');
 
@@ -98,11 +101,11 @@ function roundLeft() {
 function view(role, playerId) {
   const host = role === 'host';
   const v = {
-    role, you: playerId || null, phase: S.phase, maxPlayers: MAX_PLAYERS, mediaOnPhones: S.mediaOnPhones,
+    now: Date.now(), role, you: playerId || null, phase: S.phase, maxPlayers: MAX_PLAYERS, mediaOnPhones: S.mediaOnPhones,
     packs: host ? listPacks() : undefined, packId: S.packId,
     pack: S.pack ? { title: S.pack.title, subtitle: S.pack.subtitle, roundsCount: S.pack.rounds.length, hasFinal: !!S.pack.final } : null,
     players: S.players.map(p => ({ id: p.id, name: p.name, score: p.score, online: isOnline(p.id) })),
-    chooser: S.chooser, roundIndex: S.roundIndex, roundLeft: roundLeft(),
+    chooser: S.chooser, roundIndex: S.roundIndex, roundLeft: roundLeft(), canUndo: host ? history.length > 0 : undefined,
   };
 
   const r = round();
@@ -123,6 +126,7 @@ function view(role, playerId) {
     v.q = {
       t: q.t, i: q.i, theme: q.theme, price: q.price, type: q.type, stage: q.stage, value: q.value,
       catTheme: q.catTheme, target: q.target, answering: q.answering, tried: q.tried, buzzOpenedAt: q.buzzOpenedAt,
+      buzzDeadline: q.buzzDeadline, answerDeadline: q.answerDeadline, race: q.race, now: Date.now(),
       text: hideQuestion ? null : q.text,
       image: hideQuestion ? null : q.image, audio: hideQuestion ? null : q.audio, video: hideQuestion ? null : q.video,
       answer: showAnswer ? q.answer : null,
@@ -242,6 +246,7 @@ function openQuestion(t, i) {
   S.phase = 'question';
   S.q = {
     ...q, t, i, theme: r.themes[t].name, value: q.price, tried: [], answering: null, target: null, buzzOpenedAt: null,
+    buzzDeadline: null, answerDeadline: null, lock: {}, race: {}, buzzAt: null,
     stage: q.type === 'cat' ? 'cat-pick' : q.type === 'stake' ? 'stake-bet' : 'reading',
   };
   if (q.type === 'stake') {
@@ -260,9 +265,52 @@ function closeQuestion() {
   S.phase = 'board';
 }
 
+// Открыть кнопки. Если за BUZZ_SECONDS никто не нажал — показываем ответ.
+let buzzTimer = null;
+function openBuzz(q) {
+  q.stage = 'buzz';
+  q.answering = null;
+  q.race = {};
+  q.buzzOpenedAt = Date.now();
+  q.buzzDeadline = q.buzzOpenedAt + BUZZ_SECONDS * 1000;
+  clearTimeout(buzzTimer);
+  buzzTimer = setTimeout(() => {
+    if (S.q !== q || q.stage !== 'buzz') return;
+    q.stage = 'reveal';
+    broadcast({ kind: 'timeout' });
+  }, BUZZ_SECONDS * 1000 + 150);
+}
+
+function setAnswering(q, id) {
+  clearTimeout(buzzTimer);
+  q.stage = 'answering';
+  q.answering = id;
+  q.buzzAt = Date.now();
+  q.answerDeadline = q.buzzAt + ANSWER_SECONDS * 1000;
+}
+
+// ---------- отмена последнего действия ведущего ----------
+
+const history = [];
+function snapshot() {
+  history.push(JSON.stringify({ players: S.players, q: S.q, chooser: S.chooser, used: S.used, phase: S.phase, final: S.final }));
+  if (history.length > 30) history.shift();
+}
+function undo() {
+  const snap = history.pop();
+  if (!snap) return false;
+  const o = JSON.parse(snap);
+  // восстанавливаем очки, но не трогаем список игроков (кто-то мог подключиться)
+  for (const p of S.players) { const old = o.players.find(x => x.id === p.id); if (old) p.score = old.score; }
+  Object.assign(S, { q: o.q, chooser: o.chooser, used: o.used, phase: o.phase, final: o.final });
+  if (S.q && S.q.stage === 'buzz') openBuzz(S.q);
+  return true;
+}
+
 function judge(correct) {
   const q = S.q;
   if (!q || q.stage !== 'answering' || !q.answering) return;
+  snapshot();
   const p = player(q.answering);
   if (p) p.score += correct ? q.value : -q.value;
   if (correct) {
@@ -274,8 +322,7 @@ function judge(correct) {
   q.answering = null;
   const othersLeft = S.players.some(pl => !q.tried.includes(pl.id));
   if (q.type === 'normal' && othersLeft) {
-    q.stage = 'buzz';
-    q.buzzOpenedAt = Date.now();
+    openBuzz(q);
   } else {
     q.stage = 'reveal';
   }
@@ -329,6 +376,11 @@ io.on('connection', socket => {
     name = String(name || '').trim().slice(0, 20);
     if (!name) return toast(socket, 'Введите имя');
     let p = S.players.find(pl => pl.token === token);
+    // потерял телефон / почистил браузер — можно вернуться под тем же именем, если тот игрок не в сети
+    if (!p) {
+      const same = S.players.find(pl => pl.name.toLowerCase() === name.toLowerCase());
+      if (same && !isOnline(same.id)) p = same;
+    }
     if (!p) {
       if (S.players.length >= MAX_PLAYERS) return toast(socket, `Уже ${MAX_PLAYERS} игрока — мест нет`);
       if (S.players.some(pl => pl.name.toLowerCase() === name.toLowerCase())) return toast(socket, 'Такое имя уже занято');
@@ -350,10 +402,20 @@ io.on('connection', socket => {
   });
 
   socket.on('buzz', () => {
-    const q = S.q, id = socket.data.playerId;
-    if (!q || !id || q.stage !== 'buzz' || q.tried.includes(id)) return;
-    q.stage = 'answering';
-    q.answering = id;
+    const q = S.q, id = socket.data.playerId, now = Date.now();
+    if (!q || !id || q.tried.includes(id)) return;
+    if (q.stage === 'reading') {
+      // фальстарт: нажал раньше, чем ведущий открыл кнопки
+      q.lock[id] = now + FALSE_START_MS;
+      return socket.emit('false-start', FALSE_START_MS);
+    }
+    if (q.stage === 'answering' && q.answering !== id && q.race[id] == null && q.type === 'normal') {
+      q.race[id] = now - q.buzzAt; // на сколько опоздал — для интереса
+      return broadcast();
+    }
+    if (q.stage !== 'buzz') return;
+    if (q.lock[id] > now) return socket.emit('false-start', q.lock[id] - now);
+    setAnswering(q, id);
     broadcast({ kind: 'buzz', id });
   });
 
@@ -390,7 +452,7 @@ io.on('connection', socket => {
       case 'start':
         if (!S.pack) return toast(socket, 'Нет пака');
         if (!S.players.length) return toast(socket, 'Нет ни одного игрока');
-        S.phase = 'board'; S.roundIndex = 0; S.used = {}; S.q = null; S.final = null;
+        S.phase = 'board'; S.roundIndex = 0; S.used = {}; S.q = null; S.final = null; history.length = 0;
         S.chooser = S.players[Math.floor(Math.random() * S.players.length)].id;
         return broadcast({ kind: 'round' });
       case 'kick':
@@ -398,14 +460,15 @@ io.on('connection', socket => {
         for (const s of io.sockets.sockets.values()) if (s.data.playerId === a.id) { s.data.playerId = null; s.emit('kicked'); }
         if (S.chooser === a.id) S.chooser = S.players[0]?.id || null;
         break;
-      case 'score': { const p = player(a.id); if (p) p.score += Number(a.delta) || 0; break; }
-      case 'setScore': { const p = player(a.id); if (p) p.score = Math.round(Number(a.value) || 0); break; }
+      case 'score': { const p = player(a.id); if (p) { snapshot(); p.score += Number(a.delta) || 0; } break; }
+      case 'setScore': { const p = player(a.id); if (p) { snapshot(); p.score = Math.round(Number(a.value) || 0); } break; }
+      case 'undo': if (!undo()) return toast(socket, 'Нечего отменять'); break;
       case 'rename': { const p = player(a.id); if (p && a.name) p.name = String(a.name).slice(0, 20); break; }
       case 'chooser': if (player(a.id)) S.chooser = a.id; break;
       case 'open': if (S.phase === 'board') return openQuestion(a.t, a.i); return;
       case 'catTarget':
         if (!q || q.stage !== 'cat-pick' || !player(a.id)) return;
-        q.target = a.id; q.answering = a.id; q.stage = 'answering';
+        q.target = a.id; setAnswering(q, a.id);
         return broadcast({ kind: 'cat-target', id: a.id });
       case 'stake':
         if (!q || q.stage !== 'stake-bet') return;
@@ -417,10 +480,10 @@ io.on('connection', socket => {
         return setStake(a.amount);
       case 'openBuzz':
         if (!q || (q.stage !== 'reading' && q.stage !== 'answering')) return;
-        q.stage = 'buzz'; q.answering = null; q.buzzOpenedAt = Date.now();
+        openBuzz(q);
         return broadcast({ kind: 'buzz-open' });
       case 'judge': return judge(!!a.correct);
-      case 'reveal': if (q) { q.stage = 'reveal'; q.answering = null; } return broadcast({ kind: 'reveal' });
+      case 'reveal': if (q) { clearTimeout(buzzTimer); q.stage = 'reveal'; q.answering = null; } return broadcast({ kind: 'reveal' });
       case 'back': closeQuestion(); break;
       case 'nextRound':
         closeQuestion();
@@ -459,6 +522,7 @@ io.on('connection', socket => {
       case 'finalJudge': {
         if (!f || f.stage !== 'reveal' || f.judged[a.id] != null) return;
         const p = player(a.id); if (!p) return;
+        snapshot();
         f.opened[a.id] = true;
         f.judged[a.id] = !!a.correct;
         p.score += (a.correct ? 1 : -1) * (f.bets[a.id] || 0);
@@ -480,8 +544,7 @@ io.on('connection', socket => {
 function setStake(amount) {
   const q = S.q;
   q.value = Math.max(q.stakeMin, Math.min(q.stakeMax, Math.round(Number(amount) || 0)));
-  q.answering = q.target;
-  q.stage = 'answering';
+  setAnswering(q, q.target);
   broadcast({ kind: 'stake-set' });
 }
 

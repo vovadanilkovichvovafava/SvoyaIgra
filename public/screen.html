@@ -35,7 +35,7 @@
     socket.on('join-info-changed', loadJoinInfo);
     socket.on('connect', () => socket.emit('hello', { role: 'screen' }));
     socket.on('state', s => { state = s; render(s); });
-    socket.on('fx', playFx);
+    socket.on('fx', ev => { playFx(ev); if (ev.kind === 'round') roundIntro(state); });
 
     function render(s) {
       const main = $('#main');

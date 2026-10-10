@@ -15,6 +15,25 @@ function toast(text, ms = 2600) {
 }
 socket.on('toast', t => toast(t));
 
+// часы сервера: телефоны могут спешить/отставать, таймеры считаем по серверу
+let clockOffset = 0;
+socket.on('state', s => { if (s.now) clockOffset = s.now - Date.now(); });
+const serverNow = () => Date.now() + clockOffset;
+
+// полоска-таймер; обновляется сама, перерисовывать не нужно
+function timerBar(deadline, seconds, cls = '') {
+  if (!deadline) return '';
+  return `<div class="tbar ${cls}" data-deadline="${deadline}" data-total="${seconds * 1000}"><i></i><span></span></div>`;
+}
+setInterval(() => {
+  for (const el of document.querySelectorAll('.tbar')) {
+    const left = Math.max(0, +el.dataset.deadline - serverNow());
+    el.firstChild.style.width = (100 * left / +el.dataset.total) + '%';
+    el.lastChild.textContent = Math.ceil(left / 1000);
+    el.classList.toggle('low', left < 3000);
+  }
+}, 100);
+
 function storage(key, value) {
   try {
     if (value === undefined) return localStorage.getItem(key);
@@ -90,8 +109,12 @@ function statusLine(s) {
   if (!q) return '';
   switch (q.stage) {
     case 'reading': return 'Читаем вопрос… кнопки пока закрыты';
-    case 'buzz': return 'Кнопки открыты — жми!';
-    case 'answering': return `Отвечает: <b>${esc(pname(q.answering))}</b>`;
+    case 'buzz': return 'Кнопки открыты — жми!' + timerBar(q.buzzDeadline, 10);
+    case 'answering': {
+      const race = Object.entries(q.race || {}).sort((a, b) => a[1] - b[1])
+        .map(([id, ms]) => `${esc(pname(id))} +${(ms / 1000).toFixed(2)} с`).join(' · ');
+      return `Отвечает: <b>${esc(pname(q.answering))}</b>${race ? ` <span class="muted" style="font-size:.8em">(опоздали: ${race})</span>` : ''}` + timerBar(q.answerDeadline, 15, 'answer');
+    }
     case 'reveal': return 'Правильный ответ';
     case 'cat-pick': return 'Кому отдать кота?';
     case 'stake-bet': return `${esc(pname(q.target))} делает ставку…`;
@@ -136,6 +159,8 @@ const SFX = {
   open: () => beep([660], 0.08),
   special: () => beep([784, 988, 1175, 988, 1175, 1568], 0.08, 'triangle'),
   'buzz-open': () => beep([1200], 0.06, 'sine', 0, 0.1),
+  timeout: () => beep([440, 330, 220], 0.16, 'triangle', 0.02, 0.14),
+  round: () => beep([392, 523, 659, 784], 0.12, 'triangle', 0.03, 0.14),
   end: () => beep([523, 523, 587, 523, 698, 659], 0.18, 'triangle', 0.05), // «Happy Birthday» — первые ноты
 };
 // разблокируем звук на iOS первым касанием
@@ -180,4 +205,21 @@ function setHTML(el, html) {
   el._html = html;
   el.innerHTML = html;
   return true;
+}
+
+// ---------- заставка раунда: название и темы по одной, как в передаче ----------
+
+function roundIntro(s) {
+  const r = s.round;
+  if (!r) return;
+  document.querySelector('.intro')?.remove();
+  const el = document.createElement('div');
+  el.className = 'intro';
+  el.innerHTML = `<div class="intro-title">${esc(r.name)}</div>` +
+    r.themes.map((t, i) => `<div class="intro-theme" style="animation-delay:${0.6 + i * 0.45}s">${esc(t.name)}</div>`).join('');
+  el.onclick = () => el.remove();
+  document.body.appendChild(el);
+  const total = 0.6 + r.themes.length * 0.45 + 2.2;
+  setTimeout(() => el.classList.add('out'), total * 1000);
+  setTimeout(() => el.remove(), total * 1000 + 600);
 }

@@ -52,6 +52,7 @@
         <button class="btn small" data-a="nextRound" id="bNext">Раунд →</button>
         <button class="btn small" data-a="final" id="bFinal">Финал</button>
         <button class="btn small" data-a="end" id="bEnd">🎉 Финиш</button>
+        <button class="btn small" data-a="undo" id="bUndo" title="Отменить последнее начисление очков (Ctrl+Z)">↶ Отменить</button>
         <button class="btn small red" id="bReset">Сбросить игру</button>
       </div>
     </header>
@@ -64,7 +65,8 @@
         <h3>Игроки <span class="muted" id="pcount"></span></h3>
         <div class="plist" id="plist"></div>
         <div class="panel muted" style="font-size:14px">
-          Нажми на очки игрока, чтобы задать их вручную. «✋» — передать выбор вопроса.
+          Нажми на очки игрока, чтобы задать их вручную. «✋» — передать выбор вопроса.<br><br>
+          <b>Клавиши:</b> Пробел — открыть кнопки · Y — верно · N — неверно · R — ответ · Enter — к табло · Ctrl+Z — отменить
         </div>
       </aside>
     </div>
@@ -120,6 +122,21 @@
       const cell = e.target.closest('.board .cell[data-t]');
       if (cell) return send('open', { t: +cell.dataset.t, i: +cell.dataset.i });
     });
+    // горячие клавиши ведущего
+    document.addEventListener('keydown', e => {
+      if (!state || e.target.matches('input, textarea, select')) return;
+      const q = state.q, k = e.key.toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); return send('undo'); }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (state.phase === 'question' && q) {
+        if (k === ' ' && (q.stage === 'reading')) { e.preventDefault(); return send('openBuzz'); }
+        if ((k === 'y' || k === 'н') && q.stage === 'answering') return send('judge', { correct: true });
+        if ((k === 'n' || k === 'т') && q.stage === 'answering') return send('judge', { correct: false });
+        if ((k === 'r' || k === 'к') && q.stage !== 'reveal') return send('reveal');
+        if (k === 'enter' && q.stage === 'reveal') return send('back');
+      }
+    });
+
     $('#bReset').onclick = () => confirm('Сбросить игру? Очки обнулятся, игроки останутся.') && send('reset');
 
     const x = obj => `data-x='${JSON.stringify(obj)}'`;
@@ -132,6 +149,7 @@
       $('#bNext').classList.toggle('hidden', !inGame || s.roundIndex + 1 >= s.pack.roundsCount);
       $('#bFinal').classList.toggle('hidden', !inGame || !s.pack.hasFinal);
       $('#bEnd').classList.toggle('hidden', s.phase === 'lobby' || s.phase === 'end');
+      $('#bUndo').disabled = !s.canUndo;
       renderPlayers(s);
       const fn = { lobby: renderLobby, board: renderBoardPhase, question: renderQuestionPhase, final: renderFinal, end: renderEnd }[s.phase];
       fn(s);
@@ -184,6 +202,8 @@
             </div>
             ${joinInfo && !joinInfo.online ? '<div class="muted" style="font-size:14px">Нужна ссылка для игроков из других мест? Запусти игру командой <b>npm run online</b></div>' : ''}`}
             <div class="muted">До ${s.maxPlayers} игроков. Подключено: ${s.players.length}</div>
+            <div class="muted" style="font-size:14px">Потренироваться одному: открой тестовых игроков в отдельных вкладках —
+              ${[1, 2, 3, 4].map(n => `<a href="/play?slot=${n}" target="_blank" style="color:var(--gold)">Игрок ${n}</a>`).join(' · ')}</div>
             <label class="row" style="gap:8px;cursor:pointer"><input type="checkbox" id="mediaChk" ${s.mediaOnPhones ? 'checked' : ''} style="width:20px;height:20px">
               <span>Музыка и видео на телефонах игроков <span class="muted">(включи, если играете удалённо)</span></span></label>
             <label class="stack" style="gap:6px;margin-top:8px"><span class="muted">Пак вопросов</span>

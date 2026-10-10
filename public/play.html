@@ -64,13 +64,24 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="/common.js"></script>
   <script>
-    let token = storage('playerToken');
+    // ?slot=2 — отдельный игрок в этой вкладке (чтобы потренироваться одному на одном компьютере)
+    const slot = new URLSearchParams(location.search).get('slot');
+    const TOKEN_KEY = slot ? 'playerToken-' + slot : 'playerToken';
+    let token = storage(TOKEN_KEY);
     const nameIn = $('#name');
-    nameIn.value = storage('playerName') || '';
+    nameIn.value = slot ? '' : storage('playerName') || '';
 
     socket.on('connect', () => socket.emit('hello', { role: 'player', token }));
-    socket.on('player-token', t => { token = t; storage('playerToken', t); });
-    socket.on('kicked', () => { toast('Ведущий удалил тебя из игры'); storage('playerToken', ''); token = null; });
+    socket.on('player-token', t => { token = t; storage(TOKEN_KEY, t); });
+    socket.on('kicked', () => { toast('Ведущий удалил тебя из игры'); storage(TOKEN_KEY, ''); token = null; });
+    let earlyUntil = 0;
+    socket.on('false-start', ms => {
+      earlyUntil = Date.now() + ms;
+      navigator.vibrate?.(300);
+      const b = $('#buzzer');
+      b.className = 'buzzer early'; b.innerHTML = 'РАНО!<br><small style="font-size:.45em">фальстарт</small>';
+      setTimeout(() => state && render(state), ms);
+    });
     socket.on('state', s => { state = s; render(s); });
     socket.on('fx', ev => {
       if (ev.kind === 'buzz' && ev.id === state?.you) { navigator.vibrate?.(200); SFX.buzz(); }
@@ -78,12 +89,14 @@
       else if (ev.kind === 'wrong' && ev.id === state?.you) { SFX.wrong(); navigator.vibrate?.([80, 60, 80]); }
       else if (ev.kind === 'buzz-open') navigator.vibrate?.(40);
       else if (ev.kind === 'end') playFx(ev);
+      else if (ev.kind === 'timeout') SFX.timeout();
+      if (ev.kind === 'round') { SFX.round(); roundIntro(state); }
     });
 
     $('#joinBtn').onclick = () => {
       const name = nameIn.value.trim();
       if (!name) return toast('Введи имя');
-      storage('playerName', name);
+      if (!slot) storage('playerName', name);
       socket.emit('join', { name, token });
     };
     nameIn.onkeydown = e => { if (e.key === 'Enter') $('#joinBtn').click(); };
@@ -171,11 +184,12 @@
         q = renderFinale(s);
       }
 
+      if (s.phase === 'question' && ['buzz', 'answering'].includes(s.q.stage)) info += statusLine(s).match(/<div class="tbar[\s\S]*$/)?.[0] || '';
       setHTML($('#info'), info);
       setHTML($('#q'), q);
       setForm(form.key, form.html, () => $('#form input, #form textarea')?.focus());
       $('#buzz').classList.toggle('hidden', !buzz);
-      if (buzz) {
+      if (buzz && Date.now() > earlyUntil) {
         const b = $('#buzzer');
         b.className = 'buzzer ' + buzz.cls;
         b.innerHTML = buzz.text;
@@ -184,6 +198,7 @@
 
     function buzzerState(q, me) {
       if (q.stage === 'buzz' && !q.tried.includes(me)) return { cls: 'live', text: 'ЖМИ!' };
+      if (q.stage === 'reading') return { cls: '', text: 'Ждём…<br><small style="font-size:.45em">не жми раньше времени!</small>' };
       if (q.stage === 'buzz') return { cls: '', text: 'Ты уже<br>отвечал' };
       if (q.stage === 'answering' && q.answering === me) return { cls: 'mine', text: 'ОТВЕЧАЙ!' };
       if (q.stage === 'answering') return { cls: 'other', text: `Отвечает<br>${esc(pname(q.answering))}` };
