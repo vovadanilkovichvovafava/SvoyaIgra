@@ -139,7 +139,7 @@ function view(role, playerId) {
       catTheme: q.catTheme, target: q.target, answering: q.answering, tried: q.tried, buzzOpenedAt: q.buzzOpenedAt,
       buzzDeadline: q.buzzDeadline, answerDeadline: q.answerDeadline, race: q.race, now: Date.now(),
       text: hideQuestion ? null : q.text,
-      image: hideQuestion ? null : q.image, audio: hideQuestion ? null : q.audio, video: hideQuestion ? null : q.video,
+      image: hideQuestion ? null : q.image, audio: hideQuestion ? null : q.audio, video: hideQuestion ? null : q.video, videoMuted: !!q.videoMuted,
       answer: showAnswer ? q.answer : null,
       answerImage: showAnswer ? q.answerImage : null, answerAudio: showAnswer ? q.answerAudio : null, answerVideo: showAnswer ? q.answerVideo : null,
       comment: showAnswer ? q.comment : null,

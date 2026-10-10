@@ -70,15 +70,19 @@ function renderBoard(s, clickable) {
   </div>`;
 }
 
-function renderMedia(o, prefix = '', { noSound = false } = {}) {
+function renderMedia(o, prefix = '', { noSound = false, autoplay = false } = {}) {
   const img = o[prefix ? prefix + 'Image' : 'image'], aud = o[prefix ? prefix + 'Audio' : 'audio'], vid = o[prefix ? prefix + 'Video' : 'video'];
   let h = '';
   if (img) h += `<img src="${esc(img)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'muted',textContent:'[нет картинки: ${esc(img)}]'}))">`;
   if (noSound) {
-    if (vid || aud) h += `<div class="badge">${vid ? '🎬 Смотрим' : '🎵 Слушаем'} на экране ведущего</div>`;
+    if (vid && !prefix && o.videoMuted) h += `<video src="${esc(vid)}" muted loop autoplay playsinline></video>`;
+    else if (vid || aud) h += `<div class="badge">${vid ? '🎬 Смотрим' : '🎵 Слушаем'} на экране ведущего</div>`;
     return h;
   }
-  if (vid) h += `<video src="${esc(vid)}" controls playsinline></video>`;
+  // videoMuted: в вопросе видео без звука и по кругу (угадать фразу), в ответе — со звуком
+  if (vid) h += !prefix && o.videoMuted
+    ? `<video src="${esc(vid)}" muted loop autoplay playsinline></video>`
+    : `<video src="${esc(vid)}" controls playsinline ${autoplay ? 'autoplay' : ''}></video>`;
   if (aud) h += `<audio src="${esc(aud)}" controls></audio>`;
   return h;
 }
@@ -102,10 +106,12 @@ function renderQuestion(s, { host = false, noSound = false } = {}) {
   if (q.stage === 'auction') h += renderAuction(s);
   if (q.type === 'cat' && q.catTheme) h += `<div class="badge">Тема: ${esc(q.catTheme)}</div>`;
   h += effectBadge(s);
-  h += `<div class="text">${esc(q.text)}</div>${renderMedia(q, '', { noSound })}`;
+  // немое видео-вопрос при показе ответа заменяется видео со звуком
+  const qMedia = q.stage === 'reveal' && q.videoMuted && q.answerVideo ? { ...q, video: null } : q;
+  h += `<div class="text">${esc(q.text)}</div>${renderMedia(qMedia, '', { noSound })}`;
   if (q.answer != null) {
     h += `<div class="answer">${host && q.stage !== 'reveal' ? '<span class="muted" style="font-size:.5em;display:block">ответ (видишь только ты)</span>' : ''}${esc(q.answer)}</div>`;
-    if (q.stage === 'reveal' || host) h += renderMedia(q, 'answer', { noSound });
+    if (q.stage === 'reveal' || host) h += renderMedia(q, 'answer', { noSound, autoplay: q.stage === 'reveal' });
     if (q.comment) h += `<div class="comment">${esc(q.comment)}</div>`;
   }
   return h + '</div>';
