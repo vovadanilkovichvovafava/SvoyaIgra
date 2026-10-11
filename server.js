@@ -260,6 +260,16 @@ function toast(socket, text) { socket.emit('toast', text); }
 
 // ---------- логика вопроса ----------
 
+// Обычный вопрос ячейки (без открытия)
+function makeQuestion(t, i) {
+  const r = round(), q = r.themes[t].questions[i];
+  return {
+    ...q, t, i, theme: r.themes[t].name, value: q.price, tried: [], answering: null, target: null, buzzOpenedAt: null,
+    buzzDeadline: null, answerDeadline: null, lock: {}, race: {}, buzzAt: null,
+    stage: q.type === 'cat' ? 'cat-pick' : q.type === 'stake' ? 'stake-bet' : q.type === 'auction' ? 'auction' : 'reading',
+  };
+}
+
 function openQuestion(t, i) {
   const r = round();
   const q = r?.themes[t]?.questions[i];
@@ -267,17 +277,14 @@ function openQuestion(t, i) {
   S.phase = 'question';
   const modId = S.mods[`${t}:${i}`];
   if (modId) {
-    // ячейка-модификатор: вопроса нет, кнопки открыты сразу, кто первый нажал — забирает модификатор
+    // ячейка-модификатор: сначала только «МОДИФИКАТОР» и открытые кнопки. Кто первый нажал — забирает его
+    // и первым отвечает на вопрос этой ячейки (вопрос лежит в base и до этого никому не показывается)
     S.q = { t, i, type: 'mod', mod: modId, modOwner: null, theme: r.themes[t].name, price: q.price, value: 0,
-      text: null, answer: null, tried: [], answering: null, lock: {}, race: {} };
+      text: null, answer: null, tried: [], answering: null, lock: {}, race: {}, base: makeQuestion(t, i) };
     openBuzz(S.q);
     return broadcast({ kind: 'mod-open' });
   }
-  S.q = {
-    ...q, t, i, theme: r.themes[t].name, value: q.price, tried: [], answering: null, target: null, buzzOpenedAt: null,
-    buzzDeadline: null, answerDeadline: null, lock: {}, race: {}, buzzAt: null,
-    stage: q.type === 'cat' ? 'cat-pick' : q.type === 'stake' ? 'stake-bet' : q.type === 'auction' ? 'auction' : 'reading',
-  };
+  S.q = makeQuestion(t, i);
   if (q.type === 'auction') S.q.auction = Auction.create(S.players, S.chooser || S.players[0]?.id, q.price);
   if (q.type === 'stake') {
     S.q.target = S.chooser;
@@ -286,6 +293,15 @@ function openQuestion(t, i) {
     S.q.stakeMax = Math.max(q.price, p ? p.score : 0);
   }
   broadcast({ kind: q.type === 'normal' ? 'open' : q.type });
+}
+
+// Модификатор никто не взял — он сгорает, вопрос ячейки разыгрывается как обычный
+function burnMod() {
+  const q = S.q;
+  if (!q || q.type !== 'mod') return;
+  clearTimeout(buzzTimer);
+  S.q = q.base;
+  broadcast({ kind: 'mod-burn' });
 }
 
 function closeQuestion() {
@@ -306,6 +322,7 @@ function openBuzz(q) {
   clearTimeout(buzzTimer);
   buzzTimer = setTimeout(() => {
     if (S.q !== q || q.stage !== 'buzz') return;
+    if (q.type === 'mod') return burnMod();
     q.stage = 'reveal';
     broadcast({ kind: 'timeout' });
   }, BUZZ_SECONDS * 1000 + 150);
@@ -499,12 +516,16 @@ io.on('connection', socket => {
       // первый нажавший забирает модификатор
       snapshot();
       clearTimeout(buzzTimer);
-      q.modOwner = id;
-      q.stage = 'mod-done';
       S.usedMods.push(q.mod);
       stat(id).mods++;
       if (Mods.MODS[q.mod].flip) Mods.onCatch(q.mod, player(id)); // срабатывает сразу
-      else S.effects[id] = q.mod;                                   // ждёт следующего ответа
+      else S.effects[id] = q.mod;                                   // сработает на ответе на этот вопрос
+      // открываем вопрос ячейки: первым отвечает тот, кто забрал модификатор
+      const base = q.base;
+      base.mod = q.mod;
+      base.modOwner = id;
+      S.q = base;
+      setAnswering(base, id);
       return broadcast({ kind: 'mod', id, mod: q.mod });
     }
     const st = stat(id), reaction = now - q.buzzOpenedAt;
@@ -596,7 +617,7 @@ io.on('connection', socket => {
         openBuzz(q);
         return broadcast({ kind: 'buzz-open' });
       case 'judge': return judge(!!a.correct);
-      case 'reveal': if (q) { clearTimeout(buzzTimer); q.stage = 'reveal'; q.answering = null; } return broadcast({ kind: 'reveal' });
+      case 'reveal': if (q?.type === 'mod') return burnMod(); if (q) { clearTimeout(buzzTimer); q.stage = 'reveal'; q.answering = null; } return broadcast({ kind: 'reveal' });
       case 'back': closeQuestion(); break;
       case 'nextRound':
         closeQuestion();

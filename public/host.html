@@ -265,7 +265,7 @@
         c += `<button class="btn" data-a="reveal">Показать ответ</button>`;
       } else if (q.stage === 'buzz') {
         c += `<span class="muted" style="animation:pulse 1s infinite">Ждём, кто нажмёт…</span>`;
-        c += q.type === 'mod' ? `<button class="btn" data-a="reveal">Никто не берёт — сжечь модификатор</button>`
+        c += q.type === 'mod' ? `<button class="btn" data-a="reveal">Никто не берёт — сжечь модификатор и открыть вопрос</button>`
           : `<button class="btn" data-a="reveal">Никто не знает — показать ответ</button>`;
       } else if (q.stage === 'answering') {
         const fmt = n => (n >= 0 ? '+' : '−') + Math.abs(n);

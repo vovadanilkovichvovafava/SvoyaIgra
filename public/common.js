@@ -128,7 +128,7 @@ function statusLine(s) {
         .map(([id, ms]) => `${esc(pname(id))} +${(ms / 1000).toFixed(2)} с`).join(' · ');
       return `Отвечает: <b>${esc(pname(q.answering))}</b>${race ? ` <span class="muted" style="font-size:.8em">(опоздали: ${race})</span>` : ''}` + timerBar(q.answerDeadline, 15, 'answer');
     }
-    case 'reveal': return q.type === 'mod' ? 'Никто не рискнул — модификатор сгорел' : 'Правильный ответ';
+    case 'reveal': return 'Правильный ответ';
     case 'mod-done': return `<b>${esc(pname(q.modOwner))}</b> забирает модификатор`;
     case 'cat-pick': return 'Кому отдать кота?';
     case 'stake-bet': return `${esc(pname(q.target))} делает ставку…`;
@@ -256,18 +256,13 @@ function renderModCell(s, { host = false } = {}) {
   if (q.stage === 'buzz') h += `<small>Жми, если рискнёшь!</small>`;
   h += '</div>';
   if (host && q.mod && !q.modOwner) h += `<div class="muted">(видишь только ты: ${s.modList[q.mod].emoji} ${esc(s.modList[q.mod].name)})</div>`;
-  if (q.modOwner && q.mod) {
-    const m = s.modList[q.mod];
-    h += `<div class="modbadge ${modClass(m)}">${m.emoji} ${esc(pname(q.modOwner))}: <b>${esc(m.name)}</b> — ${esc(m.desc)}</div>`;
-    if (q.mod !== 'flip') h += `<div class="comment">Действует на следующий ответ игрока</div>`;
-  }
-  if (q.stage === 'reveal') h += `<div class="comment">Никто не рискнул — модификатор сгорел</div>`;
   return h + '</div>';
 }
 
-// В обычном вопросе: напоминание, если у отвечающего есть модификатор
+// В вопросе: напоминание, если у отвечающего есть модификатор (перевёртыш уже сработал — просто показываем)
 function effectBadge(s) {
-  const q = s.q, id = q.answering, eff = id && s.effects?.[id];
+  const q = s.q, id = q.answering;
+  const eff = id && (s.effects?.[id] || (q.mod === 'flip' && q.modOwner === id ? 'flip' : null));
   if (!eff) return '';
   const m = s.modList[eff];
   return `<div class="modbadge ${modClass(m)}">${m.emoji} ${esc(pname(id))}: <b>${esc(m.name)}</b> — ${esc(m.desc)}</div>`;
