@@ -36,7 +36,8 @@ function act(a, players, id, action, amount) {
     let v = action === 'allin' ? lim.max : Math.round(Number(amount) || 0);
     if (v < lim.min) return `Ставка не меньше ${lim.min}`;
     v = Math.min(v, lim.max);
-    a.allin = v === lim.max && v >= scoreOf(players, id) && scoreOf(players, id) > 0;
+    // ва-банк — только когда ставят все свои очки (номинал при нехватке очков — не ва-банк)
+    a.allin = scoreOf(players, id) > 0 && v === scoreOf(players, id);
     a.bet = v;
     a.leader = id;
     a.log.push(`${name}: ${a.allin ? 'ва-банк ' : ''}${v}`);
