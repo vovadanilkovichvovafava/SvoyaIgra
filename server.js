@@ -75,6 +75,7 @@ const S = {
   q: null,
   final: null,
   mods: {},             // модификаторы текущего раунда: "t:i" -> id
+  stats: {},            // статистика игроков для наград в конце: playerId -> {...}
   effects: {},          // пойманные модификаторы, ждущие следующего ответа игрока: playerId -> modId
   modsPerRound: 2,
   neutralPerRound: 1,
@@ -174,6 +175,7 @@ function view(role, playerId) {
   }
 
   if (S.phase === 'end' && S.pack?.finale) v.finale = S.pack.finale;
+  if (S.phase === 'end') v.awards = awards();
   return v;
 }
 
@@ -350,6 +352,33 @@ function previewDeltas(q) {
   return { rightDelta: r.delta, wrongDelta: Mods.judgeDelta(eff, q.value, false, q.answering, S.players).delta, stealFrom: r.steal?.from };
 }
 
+// ---------- статистика и награды ----------
+
+function stat(id) {
+  return S.stats[id] || (S.stats[id] = { fastest: null, falseStarts: 0, mods: 0, maxBet: 0, right: 0, wrong: 0 });
+}
+
+function awards() {
+  const list = [];
+  const best = (key, pickMin = false) => {
+    let top = null;
+    for (const p of S.players) {
+      const v = S.stats[p.id]?.[key];
+      if (v == null || (!pickMin && v <= 0)) continue;
+      if (!top || (pickMin ? v < top.v : v > top.v)) top = { id: p.id, name: p.name, v };
+    }
+    return top;
+  };
+  const add = (emoji, title, key, detail, pickMin) => { const b = best(key, pickMin); if (b) list.push({ emoji, title, name: b.name, detail: detail(b.v) }); };
+  add('⚡', 'Самый быстрый палец', 'fastest', v => `нажал(а) за ${(v / 1000).toFixed(2)} с`, true);
+  add('🧠', 'Главный знаток', 'right', v => `верных ответов: ${v}`);
+  add('🎲', 'Самый рисковый', 'maxBet', v => `ставка ${v}`);
+  add('🎰', 'Любимчик рулетки', 'mods', v => `модификаторов: ${v}`);
+  add('🤦', 'Король фальстартов', 'falseStarts', v => `фальстартов: ${v}`);
+  add('🙈', 'Смелость города берёт', 'wrong', v => `ошибок: ${v}`);
+  return list;
+}
+
 function judge(correct) {
   const q = S.q;
   if (!q || q.stage !== 'answering' || !q.answering) return;
@@ -362,6 +391,7 @@ function judge(correct) {
     if (r.steal) player(r.steal.from).score -= r.steal.amount;
     delete S.effects[q.answering];
   } else if (p) p.score += correct ? q.value : -q.value;
+  stat(q.answering)[correct ? 'right' : 'wrong']++;
   if (correct) {
     S.chooser = q.answering;
     q.stage = 'reveal';
@@ -456,6 +486,7 @@ io.on('connection', socket => {
     if (q.stage === 'reading') {
       // фальстарт: нажал раньше, чем ведущий открыл кнопки
       q.lock[id] = now + FALSE_START_MS;
+      stat(id).falseStarts++;
       return socket.emit('false-start', FALSE_START_MS);
     }
     if (q.stage === 'answering' && q.answering !== id && q.race[id] == null && q.type === 'normal') {
@@ -471,10 +502,13 @@ io.on('connection', socket => {
       q.modOwner = id;
       q.stage = 'mod-done';
       S.usedMods.push(q.mod);
+      stat(id).mods++;
       if (Mods.MODS[q.mod].flip) Mods.onCatch(q.mod, player(id)); // срабатывает сразу
       else S.effects[id] = q.mod;                                   // ждёт следующего ответа
       return broadcast({ kind: 'mod', id, mod: q.mod });
     }
+    const st = stat(id), reaction = now - q.buzzOpenedAt;
+    if (st.fastest == null || reaction < st.fastest) st.fastest = reaction;
     setAnswering(q, id);
     broadcast({ kind: 'buzz', id });
   });
@@ -519,7 +553,7 @@ io.on('connection', socket => {
       case 'start':
         if (!S.pack) return toast(socket, 'Нет пака');
         if (!S.players.length) return toast(socket, 'Нет ни одного игрока');
-        S.phase = 'board'; S.roundIndex = 0; S.used = {}; S.q = null; S.final = null; history.length = 0; S.usedMods = []; S.effects = {};
+        S.phase = 'board'; S.roundIndex = 0; S.used = {}; S.q = null; S.final = null; history.length = 0; S.usedMods = []; S.effects = {}; S.stats = {};
         S.chooser = S.players[Math.floor(Math.random() * S.players.length)].id;
         assignMods();
         return broadcast({ kind: 'round' });
@@ -605,11 +639,13 @@ io.on('connection', socket => {
         f.opened[a.id] = true;
         f.judged[a.id] = !!a.correct;
         p.score += (a.correct ? 1 : -1) * (f.bets[a.id] || 0);
+        stat(a.id)[a.correct ? 'right' : 'wrong']++;
+        stat(a.id).maxBet = Math.max(stat(a.id).maxBet, f.bets[a.id] || 0);
         return broadcast({ kind: a.correct ? 'right' : 'wrong', id: a.id });
       }
       case 'end': return endGame();
       case 'reset':
-        S.phase = 'lobby'; S.q = null; S.final = null; S.used = {}; S.roundIndex = 0; S.usedMods = []; S.effects = {};
+        S.phase = 'lobby'; S.q = null; S.final = null; S.used = {}; S.roundIndex = 0; S.usedMods = []; S.effects = {}; S.stats = {};
         S.players.forEach(p => { p.score = 0; });
         break;
       default: return;
@@ -633,6 +669,7 @@ function auctionAct(id, action, amount) {
 function auctionDone() {
   const q = S.q;
   q.value = q.auction.bet;
+  stat(q.auction.leader).maxBet = Math.max(stat(q.auction.leader).maxBet, q.value);
   setAnswering(q, q.auction.leader);
   broadcast({ kind: 'auction-won', id: q.auction.leader });
   return null;
@@ -640,6 +677,7 @@ function auctionDone() {
 
 function setStake(amount) {
   const q = S.q;
+  stat(q.target).maxBet = Math.max(stat(q.target).maxBet, Math.round(Number(amount) || 0));
   q.value = Math.max(q.stakeMin, Math.min(q.stakeMax, Math.round(Number(amount) || 0)));
   setAnswering(q, q.target);
   broadcast({ kind: 'stake-set' });

@@ -241,3 +241,13 @@ canvas.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 40; 
 .arow.passed { opacity: .4; }
 .arow.turn { outline: 2px solid #fff; outline-offset: 2px; }
 .arow .tag { font-size: .55em; background: #fff; color: #0a1c8c; padding: 2px 6px; vertical-align: middle; margin-left: 6px; }
+
+/* ---------- награды ---------- */
+.awards-title { color: var(--gold); font-size: clamp(22px, 3vw, 40px); margin-top: 8px; }
+.awards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; width: min(1000px, 100%); }
+.award { padding: 14px 12px; text-align: center; background: linear-gradient(180deg, var(--cell-top), var(--cell-bot));
+  border: 1px solid var(--cell-line); box-shadow: 0 0 24px rgba(60,110,255,.35); animation: specialIn .6s cubic-bezier(.2,1.6,.4,1) backwards; }
+.award .e { font-size: 40px; line-height: 1.1; }
+.award .t { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--gold); font-weight: 700; margin-top: 4px; }
+.award .n { font-size: clamp(18px, 2vw, 26px); font-weight: 900; text-transform: uppercase; margin-top: 4px; }
+.award .d { font-size: 13px; color: var(--muted); }

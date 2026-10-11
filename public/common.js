@@ -151,6 +151,9 @@ function renderFinale(s) {
     ${f.message ? `<div class="message">${esc(f.message)}</div>` : ''}
     ${f.audio ? `<audio src="${esc(f.audio)}" controls autoplay></audio>` : ''}
     <div style="width:min(800px,100%)">${renderScores(s)}</div>
+    ${s.awards?.length ? `<h2 class="awards-title">Награды</h2><div class="awards">${s.awards.map((x, k) =>
+      `<div class="award" style="animation-delay:${0.6 + k * 0.35}s"><div class="e">${x.emoji}</div><div class="t">${esc(x.title)}</div>
+        <div class="n">${esc(x.name)}</div><div class="d">${esc(x.detail)}</div></div>`).join('')}</div>` : ''}
   </div>`;
 }
 
