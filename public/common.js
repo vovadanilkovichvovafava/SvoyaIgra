@@ -53,7 +53,9 @@ function renderScores(s, { compact = false } = {}) {
     if (q && q.tried?.includes(p.id)) cls.push('tried');
     if (!p.online) cls.push('offline');
     const eff = s.effects?.[p.id] && s.modList[s.effects[p.id]];
-    return `<div class="${cls.join(' ')}"><div class="name">${esc(p.name)}${eff ? ` <span class="eff" title="${esc(eff.name)}: ${esc(eff.desc)}">${eff.emoji}</span>` : ''}</div><div class="pts ${p.score < 0 ? 'neg' : ''}">${p.score}</div></div>`;
+    const team = p.members ? `style="--team:${p.color}"` : '';
+    const members = p.members ? `<div class="members">${p.members.map(esc).join(', ') || '—'}</div>` : '';
+    return `<div class="${cls.join(' ')}${p.members ? ' team' : ''}" ${team}><div class="name">${esc(p.name)}${eff ? ` <span class="eff" title="${esc(eff.name)}: ${esc(eff.desc)}">${eff.emoji}</span>` : ''}</div>${members}<div class="pts ${p.score < 0 ? 'neg' : ''}">${p.score}</div></div>`;
   }).join('')}</div>`;
 }
 

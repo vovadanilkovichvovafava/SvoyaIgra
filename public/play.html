@@ -116,12 +116,14 @@
     }
 
     function render(s) {
-      const me = s.players.find(p => p.id === s.you);
-      $('#joinView').classList.toggle('hidden', !!me);
-      $('#gameView').classList.toggle('hidden', !me);
-      if (!me) return;
+      // me — участник (я сам или моя команда), s.me — я как человек
+      const me = s.players.find(p => p.id === s.you) || (s.me && { id: s.you, name: '', score: 0 });
+      $('#joinView').classList.toggle('hidden', !!s.me);
+      $('#gameView').classList.toggle('hidden', !s.me);
+      if (!s.me) return;
 
-      $('#myName').textContent = me.name;
+      const myTeam = s.mode === 'teams' ? s.teams.find(t => t.id === s.me.team) : null;
+      $('#myName').innerHTML = esc(s.me.name) + (myTeam ? ` <span style="color:${myTeam.color}">· ${esc(myTeam.name)}</span>` : '');
       $('#myScore').textContent = me.score;
       $('#myScore').classList.toggle('neg', me.score < 0);
       setHTML($('#mini'), s.players.filter(p => p.id !== me.id).map(p => `<span>${esc(p.name)} <b>${p.score}</b></span>`).join(''));
@@ -129,10 +131,17 @@
       let info = '', q = '', buzz = null;
       const form = { key: 'none' };
 
-      if (s.phase === 'lobby') info = `Ты в игре! Ждём начала…<br><span class="muted">Игроков: ${s.players.length}/${s.maxPlayers}</span>`;
+      if (s.phase === 'lobby') {
+        info = `Ты в игре! Ждём начала…<br><span class="muted">Игроков: ${s.people.length}/${s.maxPlayers}</span>`;
+        if (s.mode === 'teams') info += `<div class="stack" style="margin-top:14px;gap:8px"><b>Выбери команду:</b>${s.teams.map(t => {
+          const members = s.people.filter(p => p.team === t.id).map(p => p.name);
+          return `<button class="btn ${t.id === s.me.team ? 'gold' : ''}" style="border-left:8px solid ${t.color};text-align:left" onclick="socket.emit('chooseTeam', '${t.id}')">
+            ${esc(t.name)} ${t.id === s.me.team ? '✓' : ''}<br><span style="font-weight:400;text-transform:none;font-size:13px;opacity:.8">${members.map(esc).join(', ') || 'пока никого'}</span></button>`;
+        }).join('')}</div>`;
+      }
       else if (s.phase === 'board') {
         const mine = s.chooser === me.id;
-        info = mine ? '<b class="gold-text">Твой выбор!</b> Нажми на вопрос' : `Выбирает <b>${esc(pname(s.chooser))}</b>`;
+        info = mine ? `<b class="gold-text">${s.mode === 'teams' ? 'Выбирает твоя команда!' : 'Твой выбор!'}</b> Нажми на вопрос` : `Выбирает <b>${esc(pname(s.chooser))}</b>`;
         q = `<div class="pboard">${renderBoard(s, mine)}</div>`;
       }
       else if (s.phase === 'question') {
@@ -216,7 +225,7 @@
       if (q.stage === 'buzz' && !q.tried.includes(me)) return { cls: 'live', text: 'ЖМИ!' };
       if (q.stage === 'reading') return { cls: '', text: 'Ждём…<br><small style="font-size:.45em">не жми раньше времени!</small>' };
       if (q.stage === 'buzz') return { cls: '', text: 'Ты уже<br>отвечал' };
-      if (q.stage === 'answering' && q.answering === me) return { cls: 'mine', text: 'ОТВЕЧАЙ!' };
+      if (q.stage === 'answering' && q.answering === me) return { cls: 'mine', text: state.mode === 'teams' ? 'ОТВЕЧАЙТЕ!' : 'ОТВЕЧАЙ!' };
       if (q.stage === 'answering') return { cls: 'other', text: `Отвечает<br>${esc(pname(q.answering))}` };
       if (q.stage === 'reveal' || q.stage === 'mod-done') return null;
       return { cls: '', text: 'Ждём…' };

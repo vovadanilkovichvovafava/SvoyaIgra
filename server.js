@@ -12,7 +12,8 @@ const Auction = require('./auction');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ONLINE = process.argv.includes('--online');
-const MAX_PLAYERS = 4;
+const MAX_PLAYERS = 8;  // людей всего — и в обычной игре, и в командах
+const MAX_TEAMS = 4;
 const FINAL_SECONDS = 60;
 const BUZZ_SECONDS = 10;     // сколько ждём нажатия после открытия кнопок, потом — показ ответа
 const ANSWER_SECONDS = 15;   // таймер на ответ (только показывается, решает ведущий)
@@ -68,15 +69,17 @@ const S = {
   pack: defaultPack ? loadPack(defaultPack) : null,
   hostToken: null,
   phase: 'lobby', // lobby | board | question | final | end
-  players: [],    // {id, token, name, score}
+  mode: 'solo',   // solo — каждый сам за себя; teams — команды
+  people: [],     // люди: {id, token, name, score, team}
+  teams: [],      // команды: {id, name, color, score}
   roundIndex: 0,
   used: {},       // "r:t:i" -> true
   chooser: null,
   q: null,
   final: null,
   mods: {},             // модификаторы текущего раунда: "t:i" -> id
-  stats: {},            // статистика игроков для наград в конце: playerId -> {...}
-  effects: {},          // пойманные модификаторы, ждущие следующего ответа игрока: playerId -> modId
+  stats: {},            // статистика участников для наград в конце: id участника -> {...}
+  effects: {},          // пойманные модификаторы, ждущие ответа участника: id участника -> modId
   modsPerRound: 2,
   neutralPerRound: 1,
   usedMods: [],          // уже пойманные за игру — больше не выпадают
@@ -96,7 +99,35 @@ const HOST_KEY = process.env.HOST_KEY
   || (fs.existsSync(KEY_FILE) ? fs.readFileSync(KEY_FILE, 'utf8').trim() : crypto.randomBytes(4).toString('hex'));
 if (!KEY_FROM_ENV) { try { fs.writeFileSync(KEY_FILE, HOST_KEY); } catch {} }
 let publicUrl = null; // https://….trycloudflare.com, когда поднят туннель
-const player = id => S.players.find(p => p.id === id);
+// Участник игры: в обычном режиме — человек, в командном — команда (у неё общие очки и кнопка)
+const comps = () => S.mode === 'teams' ? S.teams.filter(t => S.people.some(p => p.team === t.id)) : S.people;
+const comp = id => comps().find(p => p.id === id);
+const person = id => S.people.find(p => p.id === id);
+// от чьего имени действует человек с этим сокетом
+function actor(socket) {
+  const p = person(socket.data.personId);
+  if (!p) return null;
+  return S.mode === 'teams' ? p.team : p.id;
+}
+
+const TEAM_PRESETS = [
+  { name: 'Красные', color: '#ff4b4b' }, { name: 'Синие', color: '#4b8bff' },
+  { name: 'Зелёные', color: '#31d17c' }, { name: 'Жёлтые', color: '#ffc61a' },
+];
+function setTeamsCount(n) {
+  n = Math.max(2, Math.min(MAX_TEAMS, n));
+  while (S.teams.length < n) { const k = S.teams.length; S.teams.push({ id: 'team' + (k + 1), ...TEAM_PRESETS[k], score: 0 }); }
+  S.teams.length = n;
+  for (const p of S.people) if (!S.teams.some(t => t.id === p.team)) p.team = smallestTeam();
+}
+// разложить всех поровну по командам (по порядку входа)
+function rebalance() {
+  S.people.forEach((p, k) => { p.team = S.teams[k % S.teams.length].id; });
+}
+function smallestTeam() {
+  return [...S.teams].sort((a, b) => S.people.filter(p => p.team === a.id).length - S.people.filter(p => p.team === b.id).length)[0]?.id;
+}
+setTeamsCount(2);
 const round = () => S.pack?.rounds?.[S.roundIndex];
 
 function roundLeft() {
@@ -109,14 +140,21 @@ function roundLeft() {
 
 // ---------- что видит каждая роль ----------
 
-function view(role, playerId) {
+function view(role, personId) {
   const host = role === 'host';
+  const me = person(personId);
+  const playerId = me ? (S.mode === 'teams' ? me.team : me.id) : null; // участник, за которого играет этот человек
   const v = {
     now: Date.now(), modList: Mods.publicList, modsPerRound: host ? S.modsPerRound : undefined, usedMods: S.usedMods, effects: S.effects, neutralPerRound: host ? S.neutralPerRound : undefined,
     role, you: playerId || null, phase: S.phase, maxPlayers: MAX_PLAYERS, mediaOnPhones: S.mediaOnPhones,
     packs: host ? listPacks() : undefined, packId: S.packId,
     pack: S.pack ? { title: S.pack.title, subtitle: S.pack.subtitle, roundsCount: S.pack.rounds.length, hasFinal: !!S.pack.final } : null,
-    players: S.players.map(p => ({ id: p.id, name: p.name, score: p.score, online: isOnline(p.id) })),
+    mode: S.mode,
+    me: me ? { id: me.id, name: me.name, team: me.team } : null,
+    players: comps().map(p => ({ id: p.id, name: p.name, score: p.score, online: isOnline(p.id), color: p.color,
+      members: S.mode === 'teams' ? S.people.filter(m => m.team === p.id).map(m => m.name) : undefined })),
+    people: S.people.map(p => ({ id: p.id, name: p.name, team: p.team, online: personOnline(p.id) })),
+    teams: S.teams.map(t => ({ id: t.id, name: t.name, color: t.color })),
     chooser: S.chooser, roundIndex: S.roundIndex, roundLeft: roundLeft(), canUndo: host ? history.length > 0 : undefined,
   };
 
@@ -145,7 +183,7 @@ function view(role, playerId) {
       answerImage: showAnswer ? q.answerImage : null, answerAudio: showAnswer ? q.answerAudio : null, answerVideo: showAnswer ? q.answerVideo : null,
       comment: showAnswer ? q.comment : null,
       stakeMin: q.stakeMin, stakeMax: q.stakeMax,
-      auction: q.auction ? { ...q.auction, limits: q.auction.turn ? Auction.limits(q.auction, S.players, q.auction.turn) : null } : undefined,
+      auction: q.auction ? { ...q.auction, limits: q.auction.turn ? Auction.limits(q.auction, comps(), q.auction.turn) : null } : undefined,
       mod: host || q.modOwner ? q.mod : null, modOwner: q.modOwner,
       ...(host && q.answering ? previewDeltas(q) : {}),
     };
@@ -243,15 +281,20 @@ const server = http.createServer(async (req, res) => {
 
 const io = new Server(server);
 
-function isOnline(playerId) {
-  for (const s of io.sockets.sockets.values()) if (s.data.playerId === playerId) return true;
+function personOnline(id) {
+  for (const s of io.sockets.sockets.values()) if (s.data.personId === id) return true;
   return false;
+}
+// участник в сети: человек — если подключён; команда — если подключён кто-то из неё
+function isOnline(compId) {
+  if (S.mode === 'teams') return S.people.some(p => p.team === compId && personOnline(p.id));
+  return personOnline(compId);
 }
 
 function broadcast(event) {
   for (const s of io.sockets.sockets.values()) {
     if (!s.data.role) continue;
-    s.emit('state', view(s.data.role, s.data.playerId));
+    s.emit('state', view(s.data.role, s.data.personId));
     if (event) s.emit('fx', event);
   }
 }
@@ -285,10 +328,10 @@ function openQuestion(t, i) {
     return broadcast({ kind: 'mod-open' });
   }
   S.q = makeQuestion(t, i);
-  if (q.type === 'auction') S.q.auction = Auction.create(S.players, S.chooser || S.players[0]?.id, q.price);
+  if (q.type === 'auction') S.q.auction = Auction.create(comps(), S.chooser || comps()[0]?.id, q.price);
   if (q.type === 'stake') {
     S.q.target = S.chooser;
-    const p = player(S.chooser);
+    const p = comp(S.chooser);
     S.q.stakeMin = q.price;
     S.q.stakeMax = Math.max(q.price, p ? p.score : 0);
   }
@@ -340,7 +383,7 @@ function setAnswering(q, id) {
 
 const history = [];
 function snapshot() {
-  history.push(JSON.stringify({ players: S.players, q: S.q, chooser: S.chooser, used: S.used, phase: S.phase, final: S.final, usedMods: S.usedMods, effects: S.effects }));
+  history.push(JSON.stringify({ scores: [...S.people, ...S.teams].map(x => [x.id, x.score]), q: S.q, chooser: S.chooser, used: S.used, phase: S.phase, final: S.final, usedMods: S.usedMods, effects: S.effects }));
   if (history.length > 30) history.shift();
 }
 function undo() {
@@ -348,7 +391,8 @@ function undo() {
   if (!snap) return false;
   const o = JSON.parse(snap);
   // восстанавливаем очки, но не трогаем список игроков (кто-то мог подключиться)
-  for (const p of S.players) { const old = o.players.find(x => x.id === p.id); if (old) p.score = old.score; }
+  const old = new Map(o.scores);
+  for (const x of [...S.people, ...S.teams]) if (old.has(x.id)) x.score = old.get(x.id);
   Object.assign(S, { q: o.q, chooser: o.chooser, used: o.used, phase: o.phase, final: o.final, usedMods: o.usedMods || [], effects: o.effects || {} });
   if (S.q && S.q.stage === 'buzz') openBuzz(S.q);
   return true;
@@ -365,8 +409,8 @@ function assignMods() {
 function previewDeltas(q) {
   const eff = S.effects[q.answering];
   if (!eff) return { rightDelta: q.value, wrongDelta: -q.value };
-  const r = Mods.judgeDelta(eff, q.value, true, q.answering, S.players);
-  return { rightDelta: r.delta, wrongDelta: Mods.judgeDelta(eff, q.value, false, q.answering, S.players).delta, stealFrom: r.steal?.from };
+  const r = Mods.judgeDelta(eff, q.value, true, q.answering, comps());
+  return { rightDelta: r.delta, wrongDelta: Mods.judgeDelta(eff, q.value, false, q.answering, comps()).delta, stealFrom: r.steal?.from };
 }
 
 // ---------- статистика и награды ----------
@@ -375,12 +419,22 @@ function stat(id) {
   return S.stats[id] || (S.stats[id] = { fastest: null, falseStarts: 0, mods: 0, maxBet: 0, right: 0, wrong: 0 });
 }
 
+// личная статистика человека (для «пальцевых» наград в командной игре)
+function pstat(personId) {
+  const k = 'person:' + personId;
+  return S.stats[k] || (S.stats[k] = { fastest: null, falseStarts: 0, mods: 0 });
+}
+
 function awards() {
   const list = [];
+  // «пальцевые» награды — всегда конкретному человеку, командные (знаток, риск, ошибки) — участнику
+  const personal = new Set(['fastest', 'falseStarts', 'mods']);
   const best = (key, pickMin = false) => {
     let top = null;
-    for (const p of S.players) {
-      const v = S.stats[p.id]?.[key];
+    const usePeople = S.mode === 'teams' && personal.has(key);
+    for (const p of usePeople ? S.people : comps()) {
+      const st = usePeople ? S.stats['person:' + p.id] : S.stats[p.id];
+      const v = st?.[key];
       if (v == null || (!pickMin && v <= 0)) continue;
       if (!top || (pickMin ? v < top.v : v > top.v)) top = { id: p.id, name: p.name, v };
     }
@@ -400,12 +454,12 @@ function judge(correct) {
   const q = S.q;
   if (!q || q.stage !== 'answering' || !q.answering) return;
   snapshot();
-  const p = player(q.answering);
+  const p = comp(q.answering);
   const eff = S.effects[q.answering];
   if (eff) {
-    const r = Mods.judgeDelta(eff, q.value, correct, q.answering, S.players);
+    const r = Mods.judgeDelta(eff, q.value, correct, q.answering, comps());
     if (p) p.score += r.delta;
-    if (r.steal) player(r.steal.from).score -= r.steal.amount;
+    if (r.steal) comp(r.steal.from).score -= r.steal.amount;
     delete S.effects[q.answering];
   } else if (p) p.score += correct ? q.value : -q.value;
   stat(q.answering)[correct ? 'right' : 'wrong']++;
@@ -416,7 +470,7 @@ function judge(correct) {
   }
   q.tried.push(q.answering);
   q.answering = null;
-  const othersLeft = S.players.some(pl => !q.tried.includes(pl.id));
+  const othersLeft = comps().some(pl => !q.tried.includes(pl.id));
   if (q.type === 'normal' && othersLeft) {
     openBuzz(q);
   } else {
@@ -430,11 +484,11 @@ function judge(correct) {
 function startFinal() {
   closeQuestion();
   if (!S.pack.final) return endGame();
-  const positive = S.players.filter(p => p.score > 0).map(p => p.id);
+  const positive = comps().filter(p => p.score > 0).map(p => p.id);
   S.phase = 'final';
   S.final = {
     stage: 'themes', removed: [], chosen: null,
-    participants: positive.length ? positive : S.players.map(p => p.id),
+    participants: positive.length ? positive : comps().map(p => p.id),
     bets: {}, answers: {}, judged: {}, opened: {}, deadline: null,
   };
   if (S.pack.final.themes.length === 1) { S.final.chosen = 0; S.final.stage = 'bets'; }
@@ -461,9 +515,9 @@ io.on('connection', socket => {
     } else if (role === 'screen') {
       socket.data.role = 'screen';
     } else if (role === 'player') {
-      const p = S.players.find(pl => pl.token === token);
+      const p = S.people.find(pl => pl.token === token);
       socket.data.role = 'player';
-      socket.data.playerId = p ? p.id : null;
+      socket.data.personId = p ? p.id : null;
     }
     broadcast();
   });
@@ -471,39 +525,48 @@ io.on('connection', socket => {
   socket.on('join', ({ name, token } = {}) => {
     name = String(name || '').trim().slice(0, 20);
     if (!name) return toast(socket, 'Введите имя');
-    let p = S.players.find(pl => pl.token === token);
+    let p = S.people.find(pl => pl.token === token);
     // потерял телефон / почистил браузер — можно вернуться под тем же именем, если тот игрок не в сети
     if (!p) {
-      const same = S.players.find(pl => pl.name.toLowerCase() === name.toLowerCase());
-      if (same && !isOnline(same.id)) p = same;
+      const same = S.people.find(pl => pl.name.toLowerCase() === name.toLowerCase());
+      if (same && !personOnline(same.id)) p = same;
     }
     if (!p) {
-      if (S.players.length >= MAX_PLAYERS) return toast(socket, `Уже ${MAX_PLAYERS} игрока — мест нет`);
-      if (S.players.some(pl => pl.name.toLowerCase() === name.toLowerCase())) return toast(socket, 'Такое имя уже занято');
-      p = { id: uid(), token: token || uid(), name, score: 0 };
-      S.players.push(p);
+      if (S.people.length >= MAX_PLAYERS) return toast(socket, `Уже ${MAX_PLAYERS} игроков — мест нет`);
+      if (S.people.some(pl => pl.name.toLowerCase() === name.toLowerCase())) return toast(socket, 'Такое имя уже занято');
+      p = { id: uid(), token: token || uid(), name, score: 0, team: smallestTeam() };
+      S.people.push(p);
     } else {
       p.name = name;
     }
     socket.data.role = 'player';
-    socket.data.playerId = p.id;
+    socket.data.personId = p.id;
     socket.emit('player-token', p.token);
     broadcast({ kind: 'join', id: p.id });
   });
 
   // выбирающий игрок может сам нажать на ячейку у себя на телефоне
   socket.on('pick', ({ t, i } = {}) => {
-    if (S.phase !== 'board' || !socket.data.playerId || socket.data.playerId !== S.chooser) return;
+    if (S.phase !== 'board' || !actor(socket) || actor(socket) !== S.chooser) return;
     openQuestion(t, i);
   });
 
+  // в командной игре человек сам выбирает команду в лобби
+  socket.on('chooseTeam', teamId => {
+    const p = person(socket.data.personId);
+    if (!p || S.mode !== 'teams' || S.phase !== 'lobby' || !S.teams.some(t => t.id === teamId)) return;
+    p.team = teamId;
+    broadcast();
+  });
+
   socket.on('buzz', () => {
-    const q = S.q, id = socket.data.playerId, now = Date.now();
+    const q = S.q, id = actor(socket), now = Date.now();
     if (!q || !id || q.tried.includes(id)) return;
     if (q.stage === 'reading') {
       // фальстарт: нажал раньше, чем ведущий открыл кнопки
       q.lock[id] = now + FALSE_START_MS;
       stat(id).falseStarts++;
+      pstat(socket.data.personId).falseStarts++;
       return socket.emit('false-start', FALSE_START_MS);
     }
     if (q.stage === 'answering' && q.answering !== id && q.race[id] == null && q.type === 'normal') {
@@ -518,7 +581,8 @@ io.on('connection', socket => {
       clearTimeout(buzzTimer);
       S.usedMods.push(q.mod);
       stat(id).mods++;
-      if (Mods.MODS[q.mod].flip) Mods.onCatch(q.mod, player(id)); // срабатывает сразу
+      pstat(socket.data.personId).mods++;
+      if (Mods.MODS[q.mod].flip) Mods.onCatch(q.mod, comp(id)); // срабатывает сразу
       else S.effects[id] = q.mod;                                   // сработает на ответе на этот вопрос
       // открываем вопрос ячейки: первым отвечает тот, кто забрал модификатор
       const base = q.base;
@@ -528,33 +592,33 @@ io.on('connection', socket => {
       setAnswering(base, id);
       return broadcast({ kind: 'mod', id, mod: q.mod });
     }
-    const st = stat(id), reaction = now - q.buzzOpenedAt;
-    if (st.fastest == null || reaction < st.fastest) st.fastest = reaction;
+    const reaction = now - q.buzzOpenedAt;
+    for (const st of [stat(id), pstat(socket.data.personId)]) if (st.fastest == null || reaction < st.fastest) st.fastest = reaction;
     setAnswering(q, id);
     broadcast({ kind: 'buzz', id });
   });
 
   socket.on('auction', ({ action, amount } = {}) => {
-    const err = auctionAct(socket.data.playerId, action, amount);
+    const err = auctionAct(actor(socket), action, amount);
     if (err) toast(socket, err);
   });
 
   socket.on('stake', amount => {
     const q = S.q;
-    if (!q || q.stage !== 'stake-bet' || socket.data.playerId !== q.target) return;
+    if (!q || q.stage !== 'stake-bet' || actor(socket) !== q.target) return;
     setStake(amount);
   });
 
   socket.on('final-bet', amount => {
-    const f = S.final, id = socket.data.playerId;
+    const f = S.final, id = actor(socket);
     if (!f || f.stage !== 'bets' || !f.participants.includes(id)) return;
-    const max = Math.max(0, player(id).score);
+    const max = Math.max(0, comp(id).score);
     f.bets[id] = Math.max(0, Math.min(max, Math.round(Number(amount) || 0)));
     broadcast({ kind: 'final-bet', id });
   });
 
   socket.on('final-answer', text => {
-    const f = S.final, id = socket.data.playerId;
+    const f = S.final, id = actor(socket);
     if (!f || f.stage !== 'question' || !f.participants.includes(id)) return;
     f.answers[id] = String(text || '').trim().slice(0, 200);
     broadcast({ kind: 'final-answer', id });
@@ -565,6 +629,20 @@ io.on('connection', socket => {
     const q = S.q, f = S.final;
     switch (a.type) {
       case 'mediaOnPhones': S.mediaOnPhones = !!a.on; break;
+      case 'mode':
+        if (S.phase !== 'lobby' || !['solo', 'teams'].includes(a.mode)) return;
+        S.mode = a.mode;
+        if (S.mode === 'teams') rebalance();
+        break;
+      case 'teamsCount': if (S.phase === 'lobby') { setTeamsCount(Math.round(Number(a.n) || 2)); rebalance(); } break;
+      case 'renameTeam': { const t = S.teams.find(t => t.id === a.id); if (t && a.name) t.name = String(a.name).trim().slice(0, 20) || t.name; break; }
+      case 'moveMember': { const p = person(a.id); if (p && S.teams.some(t => t.id === a.team)) p.team = a.team; break; }
+      case 'shuffleTeams': {
+        if (S.phase !== 'lobby') return;
+        const order = [...S.people].sort(() => Math.random() - 0.5);
+        order.forEach((p, k) => { p.team = S.teams[k % S.teams.length].id; });
+        break;
+      }
       case 'neutralPerRound': S.neutralPerRound = Math.max(0, Math.min(5, Math.round(Number(a.n) || 0))); break;
       case 'modsPerRound': S.modsPerRound = Math.max(0, Math.min(10, Math.round((Number(a.n) || 0) / 2) * 2)); break; // чётное: поровну хороших и плохих
       case 'setPack':
@@ -573,24 +651,26 @@ io.on('connection', socket => {
         break;
       case 'start':
         if (!S.pack) return toast(socket, 'Нет пака');
-        if (!S.players.length) return toast(socket, 'Нет ни одного игрока');
+        if (!comps().length) return toast(socket, 'Нет ни одного игрока');
+        if (S.mode === 'teams' && comps().length < 2) return toast(socket, 'Нужно хотя бы 2 команды с игроками');
         S.phase = 'board'; S.roundIndex = 0; S.used = {}; S.q = null; S.final = null; history.length = 0; S.usedMods = []; S.effects = {}; S.stats = {};
-        S.chooser = S.players[Math.floor(Math.random() * S.players.length)].id;
+        S.people.forEach(p => { p.score = 0; }); S.teams.forEach(t => { t.score = 0; });
+        S.chooser = comps()[Math.floor(Math.random() * comps().length)].id;
         assignMods();
         return broadcast({ kind: 'round' });
-      case 'kick':
-        S.players = S.players.filter(p => p.id !== a.id);
-        for (const s of io.sockets.sockets.values()) if (s.data.playerId === a.id) { s.data.playerId = null; s.emit('kicked'); }
-        if (S.chooser === a.id) S.chooser = S.players[0]?.id || null;
+      case 'kick': // удаляем человека (в командной игре команда остаётся)
+        S.people = S.people.filter(p => p.id !== a.id);
+        for (const s of io.sockets.sockets.values()) if (s.data.personId === a.id) { s.data.personId = null; s.emit('kicked'); }
+        if (!comp(S.chooser)) S.chooser = comps()[0]?.id || null;
         break;
-      case 'score': { const p = player(a.id); if (p) { snapshot(); p.score += Number(a.delta) || 0; } break; }
-      case 'setScore': { const p = player(a.id); if (p) { snapshot(); p.score = Math.round(Number(a.value) || 0); } break; }
+      case 'score': { const p = comp(a.id); if (p) { snapshot(); p.score += Number(a.delta) || 0; } break; }
+      case 'setScore': { const p = comp(a.id); if (p) { snapshot(); p.score = Math.round(Number(a.value) || 0); } break; }
       case 'undo': if (!undo()) return toast(socket, 'Нечего отменять'); break;
-      case 'rename': { const p = player(a.id); if (p && a.name) p.name = String(a.name).slice(0, 20); break; }
-      case 'chooser': if (player(a.id)) S.chooser = a.id; break;
+      case 'rename': { const p = comp(a.id); if (p && a.name) p.name = String(a.name).slice(0, 20); break; }
+      case 'chooser': if (comp(a.id)) S.chooser = a.id; break;
       case 'open': if (S.phase === 'board') return openQuestion(a.t, a.i); return;
       case 'catTarget':
-        if (!q || q.stage !== 'cat-pick' || !player(a.id)) return;
+        if (!q || q.stage !== 'cat-pick' || !comp(a.id)) return;
         q.target = a.id; setAnswering(q, a.id);
         return broadcast({ kind: 'cat-target', id: a.id });
       case 'auctionAct': { // ведущий ходит за игрока (если у того проблемы с телефоном)
@@ -606,9 +686,9 @@ io.on('connection', socket => {
       }
       case 'stake':
         if (!q || q.stage !== 'stake-bet') return;
-        if (a.target && player(a.target)) {
+        if (a.target && comp(a.target)) {
           q.target = a.target;
-          q.stakeMax = Math.max(q.price, player(a.target).score);
+          q.stakeMax = Math.max(q.price, comp(a.target).score);
           break;
         }
         return setStake(a.amount);
@@ -655,7 +735,7 @@ io.on('connection', socket => {
       case 'finalOpen': if (f && f.stage === 'reveal') f.opened[a.id] = true; break;
       case 'finalJudge': {
         if (!f || f.stage !== 'reveal' || f.judged[a.id] != null) return;
-        const p = player(a.id); if (!p) return;
+        const p = comp(a.id); if (!p) return;
         snapshot();
         f.opened[a.id] = true;
         f.judged[a.id] = !!a.correct;
@@ -667,7 +747,8 @@ io.on('connection', socket => {
       case 'end': return endGame();
       case 'reset':
         S.phase = 'lobby'; S.q = null; S.final = null; S.used = {}; S.roundIndex = 0; S.usedMods = []; S.effects = {}; S.stats = {};
-        S.players.forEach(p => { p.score = 0; });
+        S.people.forEach(p => { p.score = 0; });
+        S.teams.forEach(t => { t.score = 0; });
         break;
       default: return;
     }
@@ -680,7 +761,7 @@ io.on('connection', socket => {
 function auctionAct(id, action, amount) {
   const q = S.q;
   if (!q || q.stage !== 'auction' || !id) return 'Сейчас не аукцион';
-  const err = Auction.act(q.auction, S.players, id, action, amount);
+  const err = Auction.act(q.auction, comps(), id, action, amount);
   if (err) return err;
   if (q.auction.done) return auctionDone();
   broadcast({ kind: 'auction-bid' });

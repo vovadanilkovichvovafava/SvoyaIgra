@@ -251,3 +251,13 @@ canvas.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 40; 
 .award .t { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--gold); font-weight: 700; margin-top: 4px; }
 .award .n { font-size: clamp(18px, 2vw, 26px); font-weight: 900; text-transform: uppercase; margin-top: 4px; }
 .award .d { font-size: 13px; color: var(--muted); }
+
+/* ---------- команды ---------- */
+.score.team { border-top: 6px solid var(--team); }
+.score .members { font-size: clamp(11px, 1vw, 14px); color: var(--muted); padding: 2px 8px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.teamcard { border-top: 5px solid var(--team); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 4px 4px 10px; background: rgba(255,255,255,.08); border: 1px solid var(--panel-border); font-size: 14px; }
+.chip select { width: auto; padding: 2px 6px; font-size: 13px; }
+.seg { display: inline-flex; border: 1px solid var(--cell-line); }
+.seg button { border: 0; background: transparent; padding: 8px 14px; font-weight: 700; text-transform: uppercase; font-size: 13px; }
+.seg button.on { background: var(--gold); color: #1a1000; }

@@ -143,7 +143,7 @@
 
     function render(s) {
       $('#hdr').textContent = s.pack ? `· ${s.pack.title}` + (s.round ? ` · ${s.round.name}` : '') : '';
-      $('#pcount').textContent = `${s.players.length}/${s.maxPlayers}`;
+      $('#pcount').textContent = s.mode === 'teams' ? `· команды · ${s.people.length}/${s.maxPlayers}` : `${s.people.length}/${s.maxPlayers}`;
       const inGame = s.phase === 'board' || s.phase === 'question';
       $('#bPrev').classList.toggle('hidden', !inGame || s.roundIndex === 0);
       $('#bNext').classList.toggle('hidden', !inGame || s.roundIndex + 1 >= s.pack.roundsCount);
@@ -161,8 +161,10 @@
         <div class="panel pcard ${q && q.answering === p.id ? 'answering' : ''}">
           <div class="top">
             <div><span class="dot ${p.online ? '' : 'off'}"></span><b>${esc(p.name)}</b>${s.effects?.[p.id] ? ` <span class="badge" title="${esc(s.modList[s.effects[p.id]].desc)}">${s.modList[s.effects[p.id]].emoji} ${esc(s.modList[s.effects[p.id]].name)}</span>` : ''}${p.id === s.chooser ? ' <span class="badge">✋ выбирает</span>' : ''}</div>
-            <button class="btn small" title="Удалить" onclick="kick('${p.id}')">✕</button>
+            ${s.mode === 'teams' ? '' : `<button class="btn small" title="Удалить" onclick="kick('${p.id}')">✕</button>`}
           </div>
+          ${s.mode === 'teams' ? `<div class="row" style="gap:6px;margin-top:6px">${s.people.filter(m => m.team === p.id).map(m =>
+            `<span class="chip"><span class="dot ${m.online ? '' : 'off'}"></span>${esc(m.name)}<button class="btn small" title="Удалить" onclick="kick('${m.id}')">✕</button></span>`).join('')}</div>` : ''}
           <div class="row" style="justify-content:space-between;margin-top:6px">
             <button class="pts ${p.score < 0 ? 'neg' : ''}" style="background:none;border:0;padding:0" onclick="editScore('${p.id}')">${p.score}</button>
             <div class="row" style="gap:6px">
@@ -174,7 +176,10 @@
         </div>`).join('') || '<div class="muted">Пока никого. Пусть игроки отсканируют QR-код.</div>');
     }
 
-    function kick(id) { if (confirm(`Удалить игрока ${pname(id)}?`)) send('kick', { id }); }
+    function kick(id) {
+      const name = state.people.find(p => p.id === id)?.name || pname(id);
+      if (confirm(`Удалить игрока ${name}?`)) send('kick', { id });
+    }
     function editBet(id) {
       const p = state.players.find(p => p.id === id);
       const v = prompt(`Ставка ${p.name} (0–${Math.max(0, p.score)}):`);
@@ -201,9 +206,21 @@
               ${navigator.share ? '<button class="btn" onclick="shareLink()">Поделиться…</button>' : ''}
             </div>
             ${joinInfo && !joinInfo.online ? '<div class="muted" style="font-size:14px">Нужна ссылка для игроков из других мест? Запусти игру командой <b>npm run online</b></div>' : ''}`}
-            <div class="muted">До ${s.maxPlayers} игроков. Подключено: ${s.players.length}</div>
+            <div class="muted">До ${s.maxPlayers} игроков. Подключено: ${s.people.length}</div>
+            <div class="row" style="gap:8px">Режим:
+              <span class="seg"><button class="${s.mode === 'solo' ? 'on' : ''}" data-a="mode" ${x({ mode: 'solo' })}>Каждый сам за себя</button><button class="${s.mode === 'teams' ? 'on' : ''}" data-a="mode" ${x({ mode: 'teams' })}>Команды</button></span>
+              ${s.mode === 'teams' ? `<span class="seg">${[2, 3, 4].map(n => `<button class="${s.teams.length === n ? 'on' : ''}" data-a="teamsCount" ${x({ n })}>${n} команды</button>`).join('')}</span>
+                <button class="btn small" data-a="shuffleTeams">🎲 Перемешать</button>` : ''}
+            </div>
+            ${s.mode === 'teams' ? `<div class="stack" style="gap:8px">${s.teams.map(t => `
+              <div class="panel teamcard" style="--team:${t.color};padding:10px">
+                <input type="text" value="${esc(t.name)}" maxlength="20" style="font-size:16px;padding:6px 10px;margin-bottom:8px" onchange="send('renameTeam', { id: '${t.id}', name: this.value })">
+                <div class="row" style="gap:6px">${s.people.filter(m => m.team === t.id).map(m => `<span class="chip">${esc(m.name)}
+                  <select onchange="send('moveMember', { id: '${m.id}', team: this.value })">${s.teams.map(o => `<option value="${o.id}" ${o.id === t.id ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select></span>`).join('') || '<span class="muted">пока никого</span>'}</div>
+              </div>`).join('')}</div>
+              <div class="muted" style="font-size:14px">Игроки сами выбирают команду на телефоне, или переставь их здесь.</div>` : ''}
             <div class="muted" style="font-size:14px">Потренироваться одному: открой тестовых игроков в отдельных вкладках —
-              ${[1, 2, 3, 4].map(n => `<a href="/play?slot=${n}" target="_blank" style="color:var(--gold)">Игрок ${n}</a>`).join(' · ')}</div>
+              ${[1, 2, 3, 4, 5, 6, 7, 8].map(n => `<a href="/play?slot=${n}" target="_blank" style="color:var(--gold)">${n}</a>`).join(' · ')}</div>
             <div class="row" style="gap:8px">Модификаторы в раунде:
               <label class="row" style="gap:6px">± <input type="number" id="modsIn" min="0" max="10" step="2" value="${s.modsPerRound}" style="width:70px;padding:6px 10px"></label>
               <label class="row" style="gap:6px">нейтральных <input type="number" id="neutralIn" min="0" max="5" value="${s.neutralPerRound}" style="width:70px;padding:6px 10px"></label>
@@ -223,8 +240,10 @@
       if (neutralIn) neutralIn.onchange = () => send('neutralPerRound', { n: +neutralIn.value });
       const chk = $('#mediaChk');
       if (chk) chk.onchange = () => send('mediaOnPhones', { on: chk.checked });
-      setHTML($('#controls'), `<div class="row"><button class="btn primary big" data-a="start" ${s.players.length ? '' : 'disabled'}>Начать игру ▶</button>
-        <span class="muted">${s.players.length ? 'Первым выбирает случайный игрок' : 'Ждём хотя бы одного игрока'}</span></div>`);
+      const ready = s.mode === 'teams' ? s.players.length >= 2 : s.players.length > 0;
+      setHTML($('#controls'), `<div class="row"><button class="btn primary big" data-a="start" ${ready ? '' : 'disabled'}>Начать игру ▶</button>
+        <span class="muted">${ready ? `Первой выбирает случайная ${s.mode === 'teams' ? 'команда' : 'игрок'}`.replace('случайная игрок', 'случайный игрок')
+          : s.mode === 'teams' ? 'Нужно хотя бы 2 команды с игроками' : 'Ждём хотя бы одного игрока'}</span></div>`);
     }
 
     function renderBoardPhase(s) {
