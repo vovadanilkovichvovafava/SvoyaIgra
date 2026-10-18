@@ -582,15 +582,16 @@ io.on('connection', socket => {
       S.usedMods.push(q.mod);
       stat(id).mods++;
       pstat(socket.data.personId).mods++;
-      if (Mods.MODS[q.mod].flip) Mods.onCatch(q.mod, comp(id)); // срабатывает сразу
-      else S.effects[id] = q.mod;                                   // сработает на ответе на этот вопрос
+      let swapWith = null;
+      if (Mods.MODS[q.mod].instant) swapWith = Mods.onCatch(q.mod, comp(id), comps()); // срабатывает сразу
+      else S.effects[id] = q.mod;                                                       // сработает на ответе на этот вопрос
       // открываем вопрос ячейки: первым отвечает тот, кто забрал модификатор
       const base = q.base;
       base.mod = q.mod;
       base.modOwner = id;
       S.q = base;
       setAnswering(base, id);
-      return broadcast({ kind: 'mod', id, mod: q.mod });
+      return broadcast({ kind: 'mod', id, mod: q.mod, swapWith });
     }
     const reaction = now - q.buzzOpenedAt;
     for (const st of [stat(id), pstat(socket.data.personId)]) if (st.fastest == null || reaction < st.fastest) st.fastest = reaction;

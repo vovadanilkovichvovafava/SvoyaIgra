@@ -264,7 +264,7 @@ function renderModCell(s, { host = false } = {}) {
 // В вопросе: напоминание, если у отвечающего есть модификатор (перевёртыш уже сработал — просто показываем)
 function effectBadge(s) {
   const q = s.q, id = q.answering;
-  const eff = id && (s.effects?.[id] || (q.mod === 'flip' && q.modOwner === id ? 'flip' : null));
+  const eff = id && (s.effects?.[id] || (q.mod && s.modList[q.mod]?.instant && q.modOwner === id ? q.mod : null));
   if (!eff) return '';
   const m = s.modList[eff];
   return `<div class="modbadge ${modClass(m)}">${m.emoji} ${esc(pname(id))}: <b>${esc(m.name)}</b> — ${esc(m.desc)}</div>`;
@@ -290,7 +290,7 @@ function modReveal(s, ev) {
     if (delay < 260) { delay *= 1.15; return setTimeout(spin, delay); }
     e.textContent = m.emoji; n.textContent = m.name;
     slot.className = 'modfx-slot ' + modClass(m);
-    el.querySelector('.modfx-desc').textContent = m.desc;
+    el.querySelector('.modfx-desc').textContent = m.desc + (ev.swapWith ? ` (с: ${pname(ev.swapWith)})` : '');
     (m.good === false ? SFX.wrong : m.good ? SFX.right : SFX.special)();
     if (m.good) confetti(1500);
     setTimeout(() => el.classList.add('out'), 2600);
